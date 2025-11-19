@@ -8,13 +8,18 @@ import { useRouter } from "next/navigation"
 
 interface FinalStepProps extends HTMLMotionProps<"div"> {
   onBack?: () => void
+  onFinish?: () => void
 }
 
-export function FinalStep({ onBack, className, ...props }: FinalStepProps) {
+export function FinalStep({ onBack, onFinish, className, ...props }: FinalStepProps) {
   const router = useRouter()
 
   const handleFinish = () => {
-    router.push("/")
+    if (onFinish) {
+      onFinish()
+    } else {
+      router.push("/")
+    }
   }
 
   // Use a data URL for a 1x1 transparent pixel as the "image"

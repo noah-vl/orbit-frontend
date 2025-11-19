@@ -22,6 +22,7 @@ function OnboardingContent() {
   const [started, setStarted] = useState(false)
   const [currentStep, setCurrentStep] = useState(1)
   const [direction, setDirection] = useState(0)
+  const [isExiting, setIsExiting] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [hasJoined, setHasJoined] = useState(false)
@@ -104,8 +105,11 @@ function OnboardingContent() {
       if (inviteToken && userInfo) {
         await createAccountAndJoinTeam()
       } else {
-        // Otherwise, just redirect to dashboard
-        router.push("/")
+        // Otherwise, use exit transition and redirect
+        setIsExiting(true)
+        setTimeout(() => {
+          router.push("/")
+        }, 800)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred")
@@ -264,10 +268,11 @@ function OnboardingContent() {
 
       setHasJoined(true)
       
-      // Redirect to dashboard after a short delay
+      // Use exit transition before redirecting
+      setIsExiting(true)
       setTimeout(() => {
         router.push("/")
-      }, 2000)
+      }, 800)
     } catch (err) {
       throw err
     }
@@ -304,10 +309,26 @@ function OnboardingContent() {
 
   return (
     <div className="relative min-h-screen w-full overflow-hidden">
+      {/* Exit Transition Overlay */}
+      <AnimatePresence>
+        {isExiting && (
+          <motion.div
+            className="fixed inset-0 z-50 bg-background"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.8, ease: "easeInOut" }}
+          />
+        )}
+      </AnimatePresence>
+
       {/* Background Container with Blur effect */}
       <motion.div 
         className="absolute inset-0 -z-10"
-        animate={{ filter: started ? "blur(8px)" : "blur(0px)" }}
+        animate={{ 
+          filter: started ? "blur(8px)" : "blur(0px)",
+          scale: isExiting ? 1.1 : 1,
+        }}
         transition={{ duration: 1.5, ease: "easeInOut" }}
       >
         {/* Final Background Image (Day - Shown initially, hidden when started) */}
@@ -377,9 +398,10 @@ function OnboardingContent() {
             />
           ) : (
             <motion.div 
+              key="onboarding-content"
               className="flex flex-col flex-1 w-full h-full"
               initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
+              animate={{ opacity: isExiting ? 0 : 1, scale: isExiting ? 0.95 : 1 }}
               transition={{ duration: 0.5 }}
             >
               <div className="flex-1 flex flex-col items-center justify-center w-full max-w-5xl mx-auto overflow-hidden relative">
@@ -444,6 +466,7 @@ function OnboardingContent() {
                         opacity: { duration: 0.3 }
                       }}
                       onBack={handleBack}
+                      onFinish={handleFinish}
                     />
                   )}
                 </AnimatePresence>
@@ -453,8 +476,11 @@ function OnboardingContent() {
               <motion.div 
                 className="flex gap-3 mb-8 mx-auto"
                 initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.5, duration: 0.5 }}
+                animate={{ 
+                  opacity: isExiting ? 0 : 1,
+                  y: isExiting ? 20 : 0 
+                }}
+                transition={{ duration: 0.5 }}
               >
                 {Array.from({ length: totalSteps }).map((_, i) => (
                   <button
