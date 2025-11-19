@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import Image from "next/image"
+import { useRouter } from "next/navigation"
 import { motion, AnimatePresence } from "framer-motion"
 import { WelcomeScreen } from "@/components/features/onboarding/welcome-screen"
 import { UserInfoStep } from "@/components/features/onboarding/user-info-step"
@@ -11,9 +12,11 @@ import { FinalStep } from "@/components/features/onboarding/final-step"
 import { cn } from "@/lib/utils"
 
 export default function OnboardingPage() {
+  const router = useRouter()
   const [started, setStarted] = useState(false)
   const [currentStep, setCurrentStep] = useState(1)
   const [direction, setDirection] = useState(0)
+  const [isExiting, setIsExiting] = useState(false)
   const totalSteps = 4
 
   const handleNext = () => {
@@ -24,6 +27,13 @@ export default function OnboardingPage() {
   const handleBack = () => {
     setDirection(-1)
     setCurrentStep((prev) => Math.max(prev - 1, 1))
+  }
+
+  const handleFinish = () => {
+    setIsExiting(true)
+    setTimeout(() => {
+      router.push("/")
+    }, 800)
   }
 
   const slideVariants = {
@@ -57,10 +67,26 @@ export default function OnboardingPage() {
 
   return (
     <div className="relative min-h-screen w-full overflow-hidden">
+      {/* Exit Transition Overlay */}
+      <AnimatePresence>
+        {isExiting && (
+          <motion.div
+            className="fixed inset-0 z-50 bg-background"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.8, ease: "easeInOut" }}
+          />
+        )}
+      </AnimatePresence>
+
       {/* Background Container with Blur effect */}
       <motion.div 
         className="absolute inset-0 -z-10"
-        animate={{ filter: started ? "blur(8px)" : "blur(0px)" }}
+        animate={{ 
+          filter: started ? "blur(8px)" : "blur(0px)",
+          scale: isExiting ? 1.1 : 1,
+        }}
         transition={{ duration: 1.5, ease: "easeInOut" }}
       >
         {/* Final Background Image (Day - Shown initially, hidden when started) */}
@@ -104,12 +130,13 @@ export default function OnboardingPage() {
       <div className="flex min-h-screen flex-col items-center p-4 text-center relative z-10">
         <AnimatePresence mode="wait">
           {!started ? (
-            <WelcomeScreen onStart={() => setStarted(true)} />
+            <WelcomeScreen key="welcome" onStart={() => setStarted(true)} />
           ) : (
             <motion.div 
+              key="onboarding-content"
               className="flex flex-col flex-1 w-full h-full"
               initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
+              animate={{ opacity: isExiting ? 0 : 1, scale: isExiting ? 0.95 : 1 }}
               transition={{ duration: 0.5 }}
             >
               <div className="flex-1 flex flex-col items-center justify-center w-full max-w-5xl mx-auto overflow-hidden relative">
@@ -174,6 +201,7 @@ export default function OnboardingPage() {
                         opacity: { duration: 0.3 }
                       }}
                       onBack={handleBack}
+                      onFinish={handleFinish}
                     />
                   )}
                 </AnimatePresence>
@@ -183,8 +211,11 @@ export default function OnboardingPage() {
               <motion.div 
                 className="flex gap-3 mb-8 mx-auto"
                 initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.5, duration: 0.5 }}
+                animate={{ 
+                  opacity: isExiting ? 0 : 1,
+                  y: isExiting ? 20 : 0 
+                }}
+                transition={{ duration: 0.5 }}
               >
                 {Array.from({ length: totalSteps }).map((_, i) => (
                   <button

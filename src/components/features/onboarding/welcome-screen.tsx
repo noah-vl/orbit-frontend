@@ -29,7 +29,7 @@ export function WelcomeScreen({ onStart }: WelcomeScreenProps) {
           }
         }}
       >
-        {["Welcome", "to", "Solon"].map((word, i) => (
+        {["Welcome", "to", "Orbit"].map((word, i) => (
           <motion.span
             key={i}
             className="inline-block mr-[0.25em] last:mr-0"
@@ -67,7 +67,7 @@ export function WelcomeScreen({ onStart }: WelcomeScreenProps) {
         <Button 
           size="lg"
           onClick={onStart}
-          className="bg-white/50 backdrop-blur-md hover:bg-white/60 text-gray-900 border-white/40 border shadow-sm transition-all duration-300"
+          className="bg-white/30 backdrop-blur-md hover:bg-white/50 text-black/50 hover:text-black/80 border-white/20 border shadow-sm transition-all duration-300"
         >
           Get Started
         </Button>
