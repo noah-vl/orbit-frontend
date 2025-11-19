@@ -32,13 +32,13 @@ export function GraphChat({ onSearch, onClear, loading = false, error }: GraphCh
   };
 
   return (
-    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-[90%] max-w-xl space-y-2">
+    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-[90%] max-w-xl space-y-2 z-20 pointer-events-none">
       {error && (
-        <Card className="p-2 bg-destructive/10 border-destructive/50 text-destructive text-sm text-center">
+        <Card className="p-2 bg-destructive/10 border-destructive/50 text-destructive text-sm text-center pointer-events-auto">
           {error}
         </Card>
       )}
-      <Card className="p-1.5 bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/60 border-border/50 rounded-full">
+      <Card className="p-1.5 bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/60 border-border/50 rounded-full pointer-events-auto">
         <form onSubmit={handleSubmit} className="flex items-center gap-2">
           <Input
             value={query}

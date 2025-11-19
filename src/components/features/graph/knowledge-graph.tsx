@@ -1077,12 +1077,13 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
         </div>
       </div>
       
-      <div style={{ zIndex: 1, position: 'relative' }}>
+      <div style={{ zIndex: 1, position: 'relative', pointerEvents: 'auto' }}>
       <ForceGraph2D
         ref={graphRef}
         width={dimensions.width}
         height={dimensions.height}
         graphData={data}
+        enablePointerInteraction={true}
 
         // Colors & Style
         backgroundColor="transparent"
@@ -1209,7 +1210,7 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
           className={`absolute top-6 left-1/2 -translate-x-1/2 max-w-2xl w-[90%] z-50 transition-all duration-500 ease-in-out ${
             isFadingOut 
               ? 'opacity-0 -translate-y-4 pointer-events-none' 
-              : 'opacity-100 translate-y-0'
+              : 'opacity-100 translate-y-0 pointer-events-auto'
           }`}
         >
           <div className="bg-white/80 backdrop-blur-xl border border-white/20 rounded-2xl shadow-2xl overflow-hidden">
