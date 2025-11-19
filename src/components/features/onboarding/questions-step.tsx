@@ -121,13 +121,13 @@ export function QuestionsStep({ onNext, onBack, className, ...props }: Questions
               onNext({
                 responsibilities,
                 decisionInvolvement,
-                updateTypes,
+                updateTypes: [],
               })
             }}
             disabled={!decisionInvolvement}
             className="w-full bg-white text-black hover:bg-white/90 h-12 text-lg font-medium transition-transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Complete
+            Next
           </Button>
           {onBack && (
             <Button 

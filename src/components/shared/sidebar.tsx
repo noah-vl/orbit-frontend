@@ -40,7 +40,7 @@ export function Sidebar({ className }: SidebarProps) {
             <Link href="/" className="block">
               <Button variant="ghost" className={cn("w-full", isCollapsed ? "justify-center px-2" : "justify-start")}>
                 <Home className={cn("h-4 w-4", !isCollapsed && "mr-2")} />
-                {!isCollapsed && "Feed"}
+                {!isCollapsed && "Graph"}
               </Button>
             </Link>
             <Link href="/chat" className="block">

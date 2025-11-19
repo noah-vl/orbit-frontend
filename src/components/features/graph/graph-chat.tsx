@@ -9,15 +9,20 @@ import { Card } from "@/components/ui/card";
 interface GraphChatProps {
   onSearch: (query: string) => void;
   onClear?: () => void;
+  loading?: boolean;
+  error?: string | null;
 }
 
-export function GraphChat({ onSearch, onClear }: GraphChatProps) {
+export function GraphChat({ onSearch, onClear, loading = false, error }: GraphChatProps) {
   const [query, setQuery] = useState("");
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (query.trim()) {
-      onSearch(query);
+    const trimmedQuery = query.trim();
+    if (trimmedQuery) {
+      onSearch(trimmedQuery);
+      // Don't clear the input - let user see what they searched for
+      // They can clear it manually if needed
     }
   };
 
@@ -27,36 +32,48 @@ export function GraphChat({ onSearch, onClear }: GraphChatProps) {
   };
 
   return (
-    <Card className="absolute bottom-6 left-1/2 -translate-x-1/2 w-[90%] max-w-xl p-1.5 bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/60 border-border/50 rounded-full">
-      <form onSubmit={handleSubmit} className="flex items-center gap-2">
-        <Input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Ask a question to find relevant articles..."
-          className="border-0 shadow-none focus-visible:ring-0 bg-transparent px-4 h-10"
-        />
-        {query && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 rounded-full hover:bg-muted shrink-0"
-            onClick={handleClear}
+    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-[90%] max-w-xl space-y-2">
+      {error && (
+        <Card className="p-2 bg-destructive/10 border-destructive/50 text-destructive text-sm text-center">
+          {error}
+        </Card>
+      )}
+      <Card className="p-1.5 bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/60 border-border/50 rounded-full">
+        <form onSubmit={handleSubmit} className="flex items-center gap-2">
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Ask a question to find relevant articles..."
+            className="border-0 shadow-none focus-visible:ring-0 bg-transparent px-4 h-10"
+            disabled={loading}
+          />
+          {query && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 rounded-full hover:bg-muted shrink-0"
+              onClick={handleClear}
+              disabled={loading}
+            >
+              <X className="h-4 w-4 text-muted-foreground" />
+            </Button>
+          )}
+          <Button 
+            type="submit" 
+            size="icon" 
+            disabled={!query.trim() || loading}
+            className="rounded-full h-9 w-9 shrink-0 mr-0.5"
           >
-            <X className="h-4 w-4 text-muted-foreground" />
+            {loading ? (
+              <div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <ArrowUp className="h-4 w-4" />
+            )}
+            <span className="sr-only">Send</span>
           </Button>
-        )}
-        <Button 
-          type="submit" 
-          size="icon" 
-          disabled={!query.trim()}
-          className="rounded-full h-9 w-9 shrink-0 mr-0.5"
-        >
-          <ArrowUp className="h-4 w-4" />
-          <span className="sr-only">Send</span>
-        </Button>
-      </form>
-    </Card>
+        </form>
+      </Card>
+    </div>
   );
 }
-

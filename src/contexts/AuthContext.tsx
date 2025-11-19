@@ -128,44 +128,84 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     // First check Chrome extension, then fall back to Supabase session
     const initializeAuth = async () => {
-      const extAuth = await checkExtensionAuth()
-      
-      if (extAuth) {
-        // Use extension auth data
-        setSession(extAuth.session)
-        setUser(extAuth.session?.user ?? null)
-        setProfile(extAuth.profile)
-        setLoading(false)
-      } else {
-        // Fall back to Supabase session
-        supabase.auth.getSession().then(({ data: { session } }) => {
+      try {
+        // Add timeout to extension check to prevent hanging
+        const extAuthPromise = checkExtensionAuth()
+        const timeoutPromise = new Promise<null>((resolve) => 
+          setTimeout(() => resolve(null), 2000) // 2 second timeout for extension check
+        )
+        const extAuth = await Promise.race([extAuthPromise, timeoutPromise])
+        
+        if (extAuth) {
+          // Use extension auth data
+          setSession(extAuth.session)
+          setUser(extAuth.session?.user ?? null)
+          setProfile(extAuth.profile)
+          setLoading(false)
+        } else {
+          // Fall back to Supabase session
+          const { data: { session }, error } = await supabase.auth.getSession()
+          
+          if (error) {
+            console.error('Error getting session:', error)
+            setLoading(false)
+            return
+          }
+          
           setSession(session)
           setUser(session?.user ?? null)
+          
           if (session?.user) {
-            fetchProfile(session.user.id).finally(() => setLoading(false))
+            try {
+              await fetchProfile(session.user.id)
+            } catch (profileError) {
+              console.error('Error fetching profile during init:', profileError)
+            } finally {
+              setLoading(false)
+            }
           } else {
             setLoading(false)
           }
-        })
+        }
+      } catch (error) {
+        console.error('Error initializing auth:', error)
+        setLoading(false)
       }
     }
 
     initializeAuth()
+    
+    // Safety timeout - always set loading to false after 10 seconds
+    const safetyTimeout = setTimeout(() => {
+      console.warn('Auth initialization timeout - forcing loading to false')
+      setLoading(false)
+    }, 10000)
+    
+    return () => clearTimeout(safetyTimeout)
 
     // Listen for auth changes (only if not using extension)
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      // Only update if we're not using extension auth
-      const extAuth = await checkExtensionAuth()
-      if (!extAuth) {
-        setSession(session)
-        setUser(session?.user ?? null)
-        if (session?.user) {
-          await fetchProfile(session.user.id)
-        } else {
-          setProfile(null)
+      try {
+        // Only update if we're not using extension auth
+        const extAuth = await checkExtensionAuth()
+        if (!extAuth) {
+          setSession(session)
+          setUser(session?.user ?? null)
+          if (session?.user) {
+            try {
+              await fetchProfile(session.user.id)
+            } catch (profileError) {
+              console.error('Error fetching profile on auth change:', profileError)
+            }
+          } else {
+            setProfile(null)
+          }
+          setLoading(false)
         }
+      } catch (error) {
+        console.error('Error in auth state change handler:', error)
         setLoading(false)
       }
     })
@@ -179,8 +219,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       password,
     })
 
-    if (!error && data.user) {
-      await fetchProfile(data.user.id)
+    if (!error && data.session) {
+      // Update state immediately
+      setSession(data.session)
+      setUser(data.user)
+      
+      if (data.user) {
+        try {
+          await fetchProfile(data.user.id)
+        } catch (profileError) {
+          console.error('Error fetching profile after sign in:', profileError)
+        }
+      }
     }
 
     return { error }

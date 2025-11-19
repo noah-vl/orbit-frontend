@@ -9,9 +9,16 @@ import { useRouter } from "next/navigation"
 interface FinalStepProps extends HTMLMotionProps<"div"> {
   onBack?: () => void
   onFinish?: () => void
+  userInfo?: {
+    name: string
+    email: string
+    department: string
+    role: string
+  } | null
+  loading?: boolean
 }
 
-export function FinalStep({ onBack, onFinish, className, ...props }: FinalStepProps) {
+export function FinalStep({ onBack, onFinish, userInfo, loading = false, className, ...props }: FinalStepProps) {
   const router = useRouter()
 
   const handleFinish = () => {
@@ -55,25 +62,27 @@ export function FinalStep({ onBack, onFinish, className, ...props }: FinalStepPr
                 {/* Profile Content */}
                 <div className="flex flex-col items-center gap-6">
                   <div className="w-24 h-24 rounded-full bg-white/10 flex items-center justify-center text-4xl font-bold text-white shadow-2xl">
-                    N
+                    {userInfo?.name ? userInfo.name.charAt(0).toUpperCase() : "?"}
                   </div>
                   
                   <div className="text-center space-y-2">
                     <div className="space-y-0.5">
                       <h3 className="text-white font-bold text-2xl leading-tight tracking-tight">
-                        Noah Van Lienden
+                        {userInfo?.name || "Your Name"}
                       </h3>
                       <p className="text-white/60 text-xs font-medium">
-                        noah@orbit.com
+                        {userInfo?.email || "email@example.com"}
                       </p>
                     </div>
                     <div className="flex flex-col gap-1 mt-3 items-center">
                       <div className="inline-flex w-min items-center justify-center px-3 py-1 rounded-full bg-white/5 text-xs font-medium text-white/70">
-                         Engineering
+                         {userInfo?.department || "Department"}
                       </div>
-                      <div className="text-[10px] text-white/50 font-medium tracking-wide uppercase">
-                        Full Stack Developer
-                      </div>
+                      {userInfo?.role && (
+                        <div className="text-[10px] text-white/50 font-medium tracking-wide uppercase">
+                          {userInfo.role}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -86,9 +95,10 @@ export function FinalStep({ onBack, onFinish, className, ...props }: FinalStepPr
         <div className="pt-8 w-full max-w-[400px] space-y-4">
           <Button 
             onClick={handleFinish}
-            className="w-full bg-white text-black hover:bg-white/90 h-12 text-lg font-medium transition-transform active:scale-95"
+            disabled={loading}
+            className="w-full bg-white text-black hover:bg-white/90 h-12 text-lg font-medium transition-transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Enter Dashboard
+            {loading ? "Creating your account..." : "Enter Dashboard"}
           </Button>
           {onBack && (
             <Button 

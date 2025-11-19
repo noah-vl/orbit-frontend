@@ -10,6 +10,7 @@ import { QuestionsStep } from "@/components/features/onboarding/questions-step"
 import { InterestsStep } from "@/components/features/onboarding/interests-step"
 import { FinalStep } from "@/components/features/onboarding/final-step"
 import { cn } from "@/lib/utils"
+import { supabase } from "@/lib/supabase"
 
 const SUPABASE_URL = "https://xltqabrlmfalosewvjby.supabase.co"
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhsdHFhYnJsbWZhbG9zZXd2amJ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM1NDYwNDcsImV4cCI6MjA3OTEyMjA0N30.RHHhm4Whc8uJ1lwPwYqC1KU8B_m6hBm_XC0MCPbNiWg"
@@ -38,7 +39,7 @@ function OnboardingContent() {
     decisionInvolvement: string
     updateTypes: string[]
   } | null>(null)
-  const totalSteps = 2 // Only 2 steps for now
+  const totalSteps = 4
 
   // Check if user is already authenticated
   useEffect(() => {
@@ -79,10 +80,8 @@ function OnboardingContent() {
       } else if (prev === 2 && data) {
         setQuestionsData(data)
       }
-      // On the last step (step 2), handle completion
-      if (nextStep > totalSteps) {
-        handleComplete(data)
-      }
+      // Note: Step 3 (InterestsStep) data can be stored here if needed
+      // Step 4 (FinalStep) will call handleComplete via onFinish
       return nextStep
     })
   }
@@ -130,85 +129,104 @@ function OnboardingContent() {
     }
 
     try {
-      // Step 1: Create user account
-      const signupResponse = await fetch(`${SUPABASE_URL}/auth/v1/signup`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "apikey": SUPABASE_ANON_KEY,
-        },
-        body: JSON.stringify({
-          email: userInfo.email,
-          password: userInfo.password,
+      console.log("Step 1: Creating user account...", { email: userInfo.email, hasPassword: !!userInfo.password })
+      // Step 1: Create user account using Supabase client
+      let signupData: any = null
+      
+      console.log("Calling supabase.auth.signUp...")
+      const { data: signupResponse, error: signupError } = await supabase.auth.signUp({
+        email: userInfo.email,
+        password: userInfo.password,
+        options: {
           data: {
             full_name: userInfo.name,
           },
-        }),
-      })
-
-      if (!signupResponse.ok) {
-        const errorText = await signupResponse.text()
-        let errorData
-        try {
-          errorData = JSON.parse(errorText)
-        } catch {
-          errorData = { message: errorText }
-        }
-        throw new Error(errorData.error_description || errorData.message || "Failed to create account")
-      }
-
-      const signupData = await signupResponse.json()
-      console.log("Signup response:", signupData)
-      
-      // Try to get access token from signup response
-      let accessToken = signupData.access_token || 
-                       signupData.session?.access_token
-
-      // Always try to sign in after signup (in case email confirmation is required)
-      // This ensures we get a valid session
-      console.log("Attempting sign in after signup...")
-      const signInResponse = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "apikey": SUPABASE_ANON_KEY,
         },
-        body: JSON.stringify({
-          email: userInfo.email,
-          password: userInfo.password,
-        }),
       })
       
-      if (signInResponse.ok) {
-        const signInData = await signInResponse.json()
-        console.log("Sign in response:", signInData)
-        // Prefer sign-in token over signup token
-        const signInToken = signInData.access_token || 
-                           signInData.session?.access_token
-        if (signInToken) {
-          accessToken = signInToken
+      console.log("Signup response received:", { hasData: !!signupResponse, hasError: !!signupError, error: signupError })
+
+      if (signupError) {
+        console.error("Signup error:", signupError)
+        // If user already exists, try to sign in instead
+        if (signupError.message?.includes("already registered") || 
+            signupError.message?.includes("already exists") ||
+            signupError.message?.includes("User already registered")) {
+          console.log("User already exists, attempting sign in...")
+          const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+            email: userInfo.email,
+            password: userInfo.password,
+          })
+          
+          console.log("Sign in response:", { hasData: !!signInData, hasError: !!signInError, hasSession: !!signInData?.session })
+          
+          if (signInError) {
+            console.error("Sign in error:", signInError)
+            throw new Error("Account exists but password is incorrect")
+          }
+          
+          if (!signInData?.session) {
+            console.error("Sign in succeeded but no session returned")
+            throw new Error("Sign in succeeded but no session was returned")
+          }
+          
+          signupData = signInData
+          console.log("Sign in successful, proceeding with signupData:", { hasSession: !!signupData.session, userId: signupData.user?.id })
+        } else {
+          throw signupError
         }
       } else {
-        const errorText = await signInResponse.text()
-        console.error("Sign in error:", signInResponse.status, errorText)
-        // If sign-in fails but we have a token from signup, continue with that
-        if (!accessToken) {
-          throw new Error(`Failed to sign in: ${errorText}`)
+        signupData = signupResponse
+      }
+      
+      // Get session from signup/signin response
+      if (!signupData?.session) {
+        // If no session (email confirmation required), try to sign in
+        console.log("Step 1.5: No session from signup, attempting sign in...")
+        const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+          email: userInfo.email,
+          password: userInfo.password,
+        })
+        
+        console.log("Step 1.5 sign in response:", { hasData: !!signInData, hasError: !!signInError, hasSession: !!signInData?.session })
+        
+        if (signInError) {
+          console.error("Sign in error:", signInError)
+          throw new Error("Account created but unable to sign in. Please check your email for confirmation.")
+        }
+        
+        if (signInData?.session) {
+          signupData = signInData
+          console.log("Step 1.5: Sign in successful, session obtained")
+        } else {
+          console.error("Step 1.5: Sign in succeeded but no session")
+          throw new Error("Sign in succeeded but no session was returned")
+        }
+      }
+      
+      if (!signupData?.session) {
+        console.error("No session available after all attempts")
+        throw new Error("Failed to get session. Please check your email for confirmation.")
+      }
+      
+      const accessToken = signupData.session.access_token
+      console.log("Step 1 complete: Session obtained, accessToken:", !!accessToken)
+
+      // Ensure session is set in Supabase client (should already be set, but double-check)
+      if (signupData.session) {
+        const { error: sessionError } = await supabase.auth.setSession({
+          access_token: signupData.session.access_token,
+          refresh_token: signupData.session.refresh_token,
+        })
+        if (sessionError) {
+          console.error("Error setting session:", sessionError)
+        } else {
+          console.log("Session explicitly set in Supabase client")
         }
       }
 
-      if (!accessToken) {
-        console.error("Final signup data:", signupData)
-        throw new Error("Failed to get access token. Please check the browser console for details.")
-      }
-
-      // Store token
-      localStorage.setItem("supabase.auth.token", accessToken)
-
-      // Step 2: Update profile with additional info
-      // We'll do this after joining the team since the profile is created by join_team
-
       // Step 3: Join the team
+      console.log("Step 3: Joining team...")
       const joinResponse = await fetch(`${SUPABASE_URL}/functions/v1/join_team`, {
         method: "POST",
         headers: {
@@ -220,42 +238,32 @@ function OnboardingContent() {
           invite_token: inviteToken,
         }),
       })
-
+      
+      console.log("Join team response status:", joinResponse.status)
+      
       if (!joinResponse.ok) {
         const errorData = await joinResponse.text()
+        console.error("Join team error:", errorData)
         throw new Error(errorData || "Failed to join team")
       }
+      
+      const joinResult = await joinResponse.json()
+      console.log("Step 3 complete: Team joined successfully", joinResult)
 
-      // Step 4: Update profile with role and interests
-      // Get user ID from the token or from signup response
-      let userId = signupData.user?.id || signupData.session?.user?.id
+      // Step 4: Update profile with role and interests (non-blocking)
+      // Get user ID from the signup response
+      const userId = signupData.user?.id
       
-      // If we don't have userId, try to get it from the token
-      if (!userId && accessToken) {
-        try {
-          const userResponse = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
-            headers: {
-              "Authorization": `Bearer ${accessToken}`,
-              "apikey": SUPABASE_ANON_KEY,
-            },
-          })
-          if (userResponse.ok) {
-            const userData = await userResponse.json()
-            userId = userData.id
-          }
-        } catch (err) {
-          console.error("Error fetching user:", err)
-        }
-      }
-      
+      // Update profile in background - don't wait for it
       if (userId) {
-        const profileUpdateResponse = await fetch(`${SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${accessToken}`,
-          "apikey": SUPABASE_ANON_KEY,
-        },
+        console.log("Step 4: Updating profile (non-blocking)...")
+        fetch(`${SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}`, {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${accessToken}`,
+            "apikey": SUPABASE_ANON_KEY,
+          },
           body: JSON.stringify({
             role: userInfo.role,
             interests: JSON.stringify({
@@ -266,21 +274,50 @@ function OnboardingContent() {
             }),
           }),
         })
-
-        // Don't fail if profile update fails
-        if (!profileUpdateResponse.ok) {
-          console.error("Failed to update profile with additional info")
-        }
+        .then((response) => {
+          if (!response.ok) {
+            console.error("Failed to update profile with additional info")
+          } else {
+            console.log("Step 4 complete: Profile updated")
+          }
+        })
+        .catch((err) => {
+          console.error("Error updating profile:", err)
+        })
       }
 
       setHasJoined(true)
+      setLoading(false)
+      
+      // Wait for session to be fully persisted and AuthContext to pick it up
+      // Check session multiple times to ensure it's stable
+      let sessionVerified = false
+      for (let i = 0; i < 5; i++) {
+        await new Promise(resolve => setTimeout(resolve, 200))
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session && session.access_token) {
+          sessionVerified = true
+          console.log(`Session verified (attempt ${i + 1})`)
+          break
+        }
+      }
+      
+      if (!sessionVerified) {
+        console.error("Session not verified after multiple attempts")
+        throw new Error("Session was not properly set. Please try logging in.")
+      }
+      
+      console.log("Session verified, redirecting to dashboard")
       
       // Use exit transition before redirecting
       setIsExiting(true)
       setTimeout(() => {
-        router.push("/")
+        // Use window.location for a full page reload to ensure AuthContext reinitializes
+        window.location.href = "/"
       }, 800)
     } catch (err) {
+      console.error("Error in createAccountAndJoinTeam:", err)
+      setLoading(false)
       throw err
     }
   }
@@ -440,7 +477,7 @@ function OnboardingContent() {
                         x: { type: "spring", stiffness: 200, damping: 30 },
                         opacity: { duration: 0.3 }
                       }}
-                      onNext={(data) => handleComplete(data)}
+                      onNext={handleNext}
                       onBack={handleBack}
                     />
                   )}
@@ -473,7 +510,12 @@ function OnboardingContent() {
                         opacity: { duration: 0.3 }
                       }}
                       onBack={handleBack}
-                      onFinish={handleFinish}
+                      onFinish={() => {
+                        // On final step, complete the onboarding
+                        handleComplete()
+                      }}
+                      userInfo={userInfo}
+                      loading={loading}
                     />
                   )}
                 </AnimatePresence>
@@ -503,17 +545,6 @@ function OnboardingContent() {
                   />
                 ))}
               </motion.div>
-              
-              {/* Loading indicator */}
-              {loading && (
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="mb-4 text-white/80"
-                >
-                  Creating your account...
-                </motion.div>
-              )}
             </motion.div>
           )}
         </AnimatePresence>

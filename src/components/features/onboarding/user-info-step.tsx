@@ -198,3 +198,23 @@ export function UserInfoStep({ onNext, className, ...props }: UserInfoStepProps)
     </motion.div>
   )
 }
+
+
+          <div>
+            <Button 
+              onClick={() => {
+                if (formData.name && formData.email && formData.password && formData.department && formData.role) {
+                  onNext(formData)
+                }
+              }}
+              disabled={!formData.name || !formData.email || !formData.password || !formData.department || !formData.role || formData.password.length < 6}
+              className="w-full bg-white text-black hover:bg-white/90 h-12 text-lg font-medium transition-transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Continue
+            </Button>
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  )
+}

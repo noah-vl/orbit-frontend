@@ -1,12 +1,15 @@
 "use client";
 
-import { useEffect, useState, useRef, forwardRef, useImperativeHandle } from "react";
+import { useEffect, useState, useRef, forwardRef, useImperativeHandle, useCallback } from "react";
 import dynamic from "next/dynamic";
+import Image from "next/image";
 import { GraphChat } from "@/components/features/graph/graph-chat";
 import { GraphFilter } from "@/components/features/graph/graph-filter";
 import { generateData } from "@/components/features/graph/mock-data";
-import { Eye, EyeOff, Tag, User } from "lucide-react";
+import { Eye, EyeOff, Tag, User, X } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 
 // Helper for deterministic random values based on string seed
 const getStableRandom = (seed: string) => {
@@ -87,7 +90,16 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
   const [highlightNodes, setHighlightNodes] = useState(new Set());
   const [highlightLinks, setHighlightLinks] = useState(new Set());
   const [nodeRelevance, setNodeRelevance] = useState<Map<string, number>>(new Map());
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [searchResults, setSearchResults] = useState<Array<{ id: string; title: string; similarity: number }>>([]);
+  const [categoryResults, setCategoryResults] = useState<Array<{ category1: string; category2: string; sharedArticles: number; similarity: number }>>([]);
+  const [currentQuery, setCurrentQuery] = useState<string>("");
   const [hoverNode, setHoverNode] = useState<any>(null);
+  const [searchSummary, setSearchSummary] = useState<string>("");
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [showNotification, setShowNotification] = useState(false);
+  const [isFadingOut, setIsFadingOut] = useState(false);
   
   // Filter states
   const [statusFilters, setStatusFilters] = useState<Set<string>>(new Set());
@@ -174,6 +186,18 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
     const currentRealData = JSON.parse(JSON.stringify(fetchedData));
     let nodes = [...currentRealData.nodes];
     let links = [...currentRealData.links];
+    
+    // Only filter nodes if we have search results AND want to show only search results
+    // But keep all nodes for highlighting to work correctly
+    // We'll dim non-matching nodes instead of hiding them
+    // This ensures highlightNodes and nodeRelevance work correctly
+
+    // Ensure nodes have title property (use label or id as fallback)
+    nodes.forEach((node: any) => {
+      if (!node.title) {
+        node.title = node.label || node.name || node.id;
+      }
+    });
 
     if (showMockData) {
       const mockData = generateData();
@@ -214,77 +238,101 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
       if (node.group !== 0) {
         node.fx = undefined;
         node.fy = undefined;
-        // Start them near the center ring so they are picked up by the link force immediately
-        if (!node.x) node.x = centerX + (Math.random() - 0.5) * 50;
-        if (!node.y) node.y = centerY + (Math.random() - 0.5) * 50;
+        // Initialize nodes at their target radius to help with grouping
+        // This gives the radial force a better starting point
+        // Ensure they start outside the base category ring (150px)
+        const targetRadius = node.group === 1 ? 350 : 550;
+        const angle = Math.random() * 2 * Math.PI; // Random angle around circle
+        if (!node.x) node.x = centerX + targetRadius * Math.cos(angle);
+        if (!node.y) node.y = centerY + targetRadius * Math.sin(angle);
       }
     });
 
     setData({ nodes, links });
 
-    // Auto-zoom to fit after a short delay
-    setTimeout(() => {
-      if (graphRef.current) {
-        graphRef.current.zoomToFit(400);
-      }
-    }, 500);
+    // Auto-zoom to fit after a short delay (only if not in search mode)
+    if (highlightNodes.size === 0) {
+      setTimeout(() => {
+        if (graphRef.current) {
+          graphRef.current.zoomToFit(400);
+        }
+      }, 500);
+    }
 
   }, [fetchedData, showMockData, dimensions]);
 
   useEffect(() => {
-    if (graphRef.current) {
+    if (graphRef.current && data.nodes.length > 0) {
       const fg = graphRef.current;
       
-      // 1. Charge (Repulsion)
-      // Increased strength for more "breathing room" between nodes
-      fg.d3Force('charge').strength(-200).distanceMax(600);
+      // 1. Charge (Repulsion) - stronger to push nodes apart
+      // Use distance-based charge to prevent nodes from clustering in center
+      fg.d3Force('charge')?.strength((node: any) => {
+        // Stronger repulsion for nodes closer to center to push them outward
+        const r = Math.sqrt((node.x || 0) ** 2 + (node.y || 0) ** 2);
+        if (r < 200) {
+          return -500; // Very strong repulsion near center
+        }
+        return -300; // Normal repulsion further out
+      }).distanceMax(800);
 
-      // 2. Link Force
-      // Relaxed connections to allow more floating movement
-      fg.d3Force('link').distance((link: any) => {
-         const target = link.target;
-         const group = target.group;
+      // 2. Link Force - keeps connected nodes at appropriate distances
+      fg.d3Force('link')?.distance((link: any) => {
+         const target = typeof link.target === 'object' ? link.target : data.nodes.find((n: any) => n.id === link.target);
+         const group = target?.group;
          
-         if (group === 2) return 50;   // Articles: looser connection to subtopic
-         if (group === 1) return 100;  // Subtopics: more space from main topic
-         return 150; 
+         if (group === 2) return 80;   // Articles: connection to subtopic
+         if (group === 1) return 120;  // Subtopics: connection to main topic
+         return 200; // Base categories
       });
       
-      // 3. Custom Radial Force
-      // Keeps Group 1 and Group 2 nodes in their respective concentric rings
-      // Adjusted strength to be gentler (0.1) so they don't feel rigidly "dragged"
+      // 3. Custom Radial Force - strong to maintain ring structure and prevent inward collapse
+      // This keeps Group 1 and Group 2 nodes in their respective concentric rings
       const radialForce = (alpha: number) => {
         const cx = 0;
         const cy = 0;
-        const strength = 0.1; // Very gentle pull to maintain ring structure loosely
+        const strength = 0.8; // Much stronger to maintain ring structure and push outward
 
         data.nodes.forEach((node: any) => {
-          if (node.group === 0) return; // fixed nodes ignored
+          if (node.group === 0) return; // fixed nodes ignored (base categories)
 
           const dx = node.x - cx || 1e-6;
           const dy = node.y - cy || 1e-6;
           const r = Math.sqrt(dx * dx + dy * dy);
           
-          // Target radii - slightly larger for more space
-          const targetRadius = node.group === 1 ? 320 : 480;
+          // Target radii for each group - ensure they're outside the base category ring (150px)
+          const minRadius = 200; // Minimum radius to stay outside base categories
+          const targetRadius = node.group === 1 ? 350 : 550; // Subcategories at 350, Articles at 550
           
-          // Force magnitude: pull towards radius
-          // Apply alpha to decay force over time (stabilize)
+          // If node is too close to center, push it outward strongly
+          if (r < minRadius) {
+            const pushStrength = (minRadius - r) * alpha * 2.0; // Very strong push outward
+            node.vx = (node.vx || 0) + (dx / r) * pushStrength;
+            node.vy = (node.vy || 0) + (dy / r) * pushStrength;
+          }
+          
+          // Force magnitude: pull towards target radius
+          // Stronger force when further from target
           const k = (targetRadius - r) * alpha * strength;
           
-          node.vx += (dx / r) * k;
-          node.vy += (dy / r) * k;
+          node.vx = (node.vx || 0) + (dx / r) * k;
+          node.vy = (node.vy || 0) + (dy / r) * k;
         });
       };
       
       fg.d3Force('radial', radialForce);
       
-      // Re-heat simulation
+      // Re-heat simulation to apply forces (only when data changes, not on hover)
       fg.d3ReheatSimulation();
     }
-  }, [data, dimensions]);
+  }, [data.nodes.length, dimensions]); // Only depend on node count, not full data object
 
   useEffect(() => {
+    // Don't interfere with search results - if we have search results, don't apply filter-based relevance
+    if (highlightNodes.size > 0 && nodeRelevance.size > 0) {
+      return; // Keep search-based relevance
+    }
+    
     const hasStatus = statusFilters.size > 0;
     const hasFit = personalFitFilters.size > 0;
     
@@ -376,76 +424,347 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
     
   }, [statusFilters, personalFitFilters, data]);
 
-  const handleNodeHover = (node: any) => {
+  // Use useCallback to prevent excessive re-renders and memoize the handler
+  const handleNodeHover = useCallback((node: any) => {
+    // Only update hover state - this is lightweight and doesn't trigger physics
     setHoverNode(node || null);
 
-    const newHighlightNodes = new Set();
-    const newHighlightLinks = new Set();
+    // Only update highlight nodes/links if we're not in search mode
+    // In search mode, keep the search highlights and don't override them
+    if (node && highlightNodes.size === 0) {
+      // Only do expensive link iteration if not in search mode
+      const newHighlightNodes = new Set<string>();
+      const newHighlightLinks = new Set();
 
-    if (node) {
       newHighlightNodes.add(node.id);
-      // Use the graph's internal data structure to find neighbors if possible, 
-      // but since we have the raw data, we can filter links.
-      // However, react-force-graph modifies the data objects to include neighbors.
-      // Let's iterate links to find connected nodes.
-
-      // Note: react-force-graph converts source/target to objects. 
-      // We need to check if source/target matches our node.
-
-      // We can access the graph data from state 'data', but the force graph library 
-      // might have mutated it (processed it). 
-      // Safe way: check the links in the passed 'data' or rely on visual properties.
-
-      // Simplified approach using the processed links from the library if available,
-      // or just iterating our local state links if they are properly updated.
-      // Since 'data' is passed to the graph, the graph mutates it.
-
+      // Use a more efficient approach - cache link source/target IDs
       (data.links as any[]).forEach(link => {
-        if (link.source.id === node.id || link.target.id === node.id) {
+        const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+        const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+        
+        if (sourceId === node.id || targetId === node.id) {
           newHighlightLinks.add(link);
-          newHighlightNodes.add(link.source.id);
-          newHighlightNodes.add(link.target.id);
+          newHighlightNodes.add(sourceId);
+          newHighlightNodes.add(targetId);
         }
       });
-    }
 
-    setHighlightNodes(newHighlightNodes);
-    setHighlightLinks(newHighlightLinks);
+      setHighlightNodes(newHighlightNodes);
+      setHighlightLinks(newHighlightLinks);
+    } else if (!node) {
+      // Clear highlights when not hovering (only if not in search mode)
+      if (highlightNodes.size > 0 && nodeRelevance.size === 0) {
+        setHighlightNodes(new Set());
+        setHighlightLinks(new Set());
+      }
+    }
 
     if (containerRef.current) {
       containerRef.current.style.cursor = node ? "pointer" : "default";
     }
-  };
+  }, [data.links, highlightNodes.size, nodeRelevance.size]);
 
-  const handleSearch = (query: string) => {
-    const lowerQuery = query.toLowerCase();
-    const matchedNodes = new Set();
+  const handleSearch = async (query: string) => {
+    const trimmedQuery = query.trim();
+    
+    if (!teamId || !trimmedQuery) {
+      console.log('Search skipped: missing teamId or empty query', { teamId, query: trimmedQuery });
+      setSearchError('Missing team ID or empty query');
+      return;
+    }
 
-    data.nodes.forEach((node: any) => {
-      // Check id/label
-      if (node.id && typeof node.id === 'string' && node.id.toLowerCase().includes(lowerQuery)) {
-        matchedNodes.add(node.id);
-      }
-      // Check content if available
-      if (node.content && typeof node.content === 'string' && node.content.toLowerCase().includes(lowerQuery)) {
-        matchedNodes.add(node.id);
-      }
-    });
+    // If it's the same query, don't search again (prevent duplicate searches)
+    if (currentQuery === trimmedQuery && searchLoading) {
+      console.log('Same query already in progress, skipping');
+      return;
+    }
 
-    if (matchedNodes.size > 0) {
-      setHighlightNodes(matchedNodes);
-      // Optionally clear highlight links or highlight links between matched nodes?
-      setHighlightLinks(new Set());
+    console.log('Starting NEW search:', { query: trimmedQuery, teamId, previousQuery: currentQuery });
+    
+    // Update current query immediately
+    setCurrentQuery(trimmedQuery);
+    
+    // Clear ALL previous search state immediately (use functional updates to ensure they happen)
+    setSearchLoading(true);
+    setSearchError(null);
+    setSearchResults([]);
+    setCategoryResults([]);
+    setSearchSummary("");
+    setHighlightNodes(new Set());
+    setHighlightLinks(new Set());
+    setNodeRelevance(new Map());
+
+    try {
+      const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhsdHFhYnJsbWZhbG9zZXd2amJ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM1NDYwNDcsImV4cCI6MjA3OTEyMjA0N30.RHHhm4Whc8uJ1lwPwYqC1KU8B_m6hBm_XC0MCPbNiWg';
       
-      // If single match or small number, maybe zoom to them?
-      if (graphRef.current && matchedNodes.size === 1) {
-        const nodeId = Array.from(matchedNodes)[0];
-        const node = data.nodes.find((n: any) => n.id === nodeId);
-        if (node) {
-            // graphRef.current.centerAt(node.x, node.y, 1000);
-            // graphRef.current.zoom(2, 1000);
+      const headers: HeadersInit = {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_ANON_KEY,
+      };
+
+      if (session?.access_token) {
+        headers['Authorization'] = `Bearer ${session.access_token}`;
+      }
+
+      // Use semantic search endpoint (vector embeddings)
+      console.log('Using semantic search with vector embeddings');
+      const response = await fetch('https://xltqabrlmfalosewvjby.supabase.co/functions/v1/search_natural', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          query: trimmedQuery,
+          team_id: teamId,
+          limit: 20,
+        }),
+        cache: 'no-store', // Ensure fresh request (no Cache-Control header needed)
+      });
+
+      console.log('Search response status:', response.status);
+
+      // If 401, retry without Authorization header (team_id is in body, so it should work)
+      let responseData: any;
+      if (response.status === 401 && session?.access_token) {
+        console.warn('401 error, retrying without Authorization header');
+        const retryHeaders: HeadersInit = {
+          'Content-Type': 'application/json',
+          'apikey': SUPABASE_ANON_KEY,
+        };
+        
+        const retryResponse = await fetch('https://xltqabrlmfalosewvjby.supabase.co/functions/v1/search_natural', {
+          method: 'POST',
+          headers: retryHeaders,
+          body: JSON.stringify({
+            query: trimmedQuery,
+            team_id: teamId,
+            limit: 20,
+          }),
+          cache: 'no-store',
+        });
+
+        if (!retryResponse.ok) {
+          const errorText = await retryResponse.text();
+          console.error('Search failed on retry:', retryResponse.status, errorText);
+          setSearchError(`Search failed: ${retryResponse.status}`);
+          setSearchLoading(false);
+          return;
+        }
+
+        responseData = await retryResponse.json();
+        console.log('Search response data (retry):', responseData);
+      } else if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Search failed:', response.status, errorText);
+        setSearchError(`Search failed: ${response.status}`);
+        setSearchLoading(false);
+        return;
+      } else {
+        responseData = await response.json();
+      }
+
+      console.log('Search response data:', responseData);
+      console.log('Search response data:', responseData);
+      
+      // Handle both articles and categories
+      const articles = responseData.articles || [];
+      const categories = responseData.categories || [];
+      const overlaps = responseData.overlaps || [];
+      const summary = responseData.summary || "";
+      
+      console.log('Search summary received:', summary);
+      
+      // Set the AI-generated summary (only if LLM generated one)
+      if (summary) {
+        setSearchSummary(summary);
+        setIsFadingOut(false);
+        setShowNotification(true);
+        
+        // Auto-dismiss after 8 seconds
+        setTimeout(() => {
+          setIsFadingOut(true);
+          // Clear summary after fade out animation completes
+          setTimeout(() => {
+            setShowNotification(false);
+            setSearchSummary("");
+            setIsFadingOut(false);
+          }, 500);
+        }, 8000);
+      }
+      
+      // Use original fetched data for searching, not filtered data
+      const originalNodes = JSON.parse(JSON.stringify(fetchedData.nodes));
+      const originalLinks = JSON.parse(JSON.stringify(fetchedData.links));
+      
+      // Find category nodes in the graph and highlight them
+      const matchedCategoryNodes = new Set<string>();
+      const categoryRelevanceMap = new Map<string, number>();
+      const allMatchedNodes = new Set<string>();
+      const combinedRelevanceMap = new Map<string, number>();
+      
+      if (categories && categories.length > 0) {
+        console.log('Found categories:', categories.length, 'for query:', trimmedQuery);
+        
+        categories.forEach((category: any) => {
+          // Find nodes that match this category
+          // Category nodes use tag name as their id and label (from get_graph)
+          originalNodes.forEach((node: any) => {
+            // Match by name (category nodes use tag name as id/label)
+            if (node.id === category.name || 
+                node.label === category.name ||
+                node.id === category.id) {
+              matchedCategoryNodes.add(node.id);
+              allMatchedNodes.add(node.id);
+              const similarity = category.similarity || 0.8;
+              categoryRelevanceMap.set(node.id, similarity);
+              combinedRelevanceMap.set(node.id, similarity);
+              // Don't add connected nodes - only highlight exact matches
+            }
+          });
+        });
+        
+        // Set category overlaps for display (use actual overlaps from API)
+        if (overlaps.length > 0) {
+          setCategoryResults(overlaps);
+        } else {
+          // Fallback: show individual categories if no overlaps
+          setCategoryResults(categories.map((cat: any) => ({
+            category1: cat.name,
+            category2: '',
+            sharedArticles: 0,
+            similarity: cat.similarity,
+          })));
         }
       }
+      
+      // Handle article search results
+      if (!articles || articles.length === 0) {
+        console.log('No articles or categories found for query:', trimmedQuery);
+        // Clear all state when no results
+        setSearchResults([]);
+        setCategoryResults([]);
+        setSearchSummary("");
+        setShowNotification(false);
+        setIsFadingOut(false);
+        setHighlightNodes(new Set());
+        setHighlightLinks(new Set());
+        setNodeRelevance(new Map());
+        setSearchError(null);
+        setSearchLoading(false);
+        return;
+      }
+
+      console.log('Found articles:', articles.length, 'for query:', trimmedQuery);
+
+      // Create a map of article IDs to similarity scores and store results
+      const relevanceMap = new Map<string, number>();
+      const matchedArticleIds = new Set<string>();
+      const results: Array<{ id: string; title: string; similarity: number }> = [];
+      
+      articles.forEach((article: any) => {
+        matchedArticleIds.add(article.id);
+        const similarity = article.similarity || 0;
+        relevanceMap.set(article.id, similarity);
+        results.push({
+          id: article.id,
+          title: article.title || 'Untitled',
+          similarity: similarity,
+        });
+      });
+
+      // Also map similarity scores to node IDs (for nodes that use articleId)
+      originalNodes.forEach((node: any) => {
+        if (node.articleId && matchedArticleIds.has(node.articleId)) {
+          const similarity = relevanceMap.get(node.articleId) || 0;
+          relevanceMap.set(node.id, similarity); // Also map by node.id for highlighting
+        }
+      });
+
+      // Sort by similarity (highest first)
+      results.sort((a, b) => b.similarity - a.similarity);
+      setSearchResults(results);
+
+      // Find matching article nodes in the graph
+      originalNodes.forEach((node: any) => {
+        // Check if node represents an article by articleId (UUID) or by URL
+        if (node.articleId && matchedArticleIds.has(node.articleId)) {
+          allMatchedNodes.add(node.id);
+          const similarity = relevanceMap.get(node.articleId) || 0;
+          combinedRelevanceMap.set(node.id, similarity);
+        } else if (node.id && matchedArticleIds.has(node.id)) {
+          allMatchedNodes.add(node.id);
+          const similarity = relevanceMap.get(node.id) || 0;
+          combinedRelevanceMap.set(node.id, similarity);
+        } else if (node.url && articles.some((a: any) => a.url === node.url)) {
+          allMatchedNodes.add(node.id);
+          const article = articles.find((a: any) => a.url === node.url);
+          combinedRelevanceMap.set(node.id, article?.similarity || 0);
+        }
+      });
+
+      console.log('Matched nodes (articles + categories):', allMatchedNodes.size);
+
+      // Combine article and category relevance maps
+      // Category nodes get priority if both exist
+      matchedCategoryNodes.forEach((nodeId) => {
+        const catSim = categoryRelevanceMap.get(nodeId) || 0;
+        const articleSim = combinedRelevanceMap.get(nodeId) || 0;
+        // Use the higher similarity score
+        combinedRelevanceMap.set(nodeId, Math.max(catSim, articleSim));
+      });
+
+      // Only highlight exact search results - categories and articles
+      // Don't add connected nodes, just the direct matches
+      const visibleNodeIds = new Set<string>(allMatchedNodes);
+      
+      // Make sure category nodes from overlaps are included
+      if (overlaps.length > 0) {
+        overlaps.forEach((overlap: any) => {
+          // Find nodes for both categories in the overlap
+          const cat1Node = originalNodes.find((n: any) => 
+            n.id === overlap.category1 || n.label === overlap.category1
+          );
+          const cat2Node = originalNodes.find((n: any) => 
+            n.id === overlap.category2 || n.label === overlap.category2
+          );
+          
+          if (cat1Node) visibleNodeIds.add(cat1Node.id);
+          if (cat2Node) visibleNodeIds.add(cat2Node.id);
+        });
+      }
+      
+      setHighlightNodes(visibleNodeIds);
+      setHighlightLinks(new Set());
+      setNodeRelevance(combinedRelevanceMap);
+
+      // Zoom to first match if available (prioritize categories)
+      if (graphRef.current && allMatchedNodes.size > 0) {
+        // Prefer category nodes if available, otherwise use first article node
+        const nodeIdToZoom = matchedCategoryNodes.size > 0 
+          ? Array.from(matchedCategoryNodes)[0]
+          : Array.from(allMatchedNodes)[0];
+        
+        const node = originalNodes.find((n: any) => n.id === nodeIdToZoom);
+        if (node && node.x !== undefined && node.y !== undefined) {
+          graphRef.current.centerAt(node.x, node.y, 1000);
+          graphRef.current.zoom(2, 1000);
+        }
+      } else {
+        console.warn('No matching nodes found in graph for search results');
+        setSearchError('No matching articles or categories found in the graph');
+      }
+    } catch (error) {
+      console.error('Error performing vector search:', error);
+      setSearchError(error instanceof Error ? error.message : 'Search failed');
+      // Clear all results on error
+      setSearchResults([]);
+      setCategoryResults([]);
+      setSearchSummary("");
+      setShowNotification(false);
+      setIsFadingOut(false);
+      setHighlightNodes(new Set());
+      setHighlightLinks(new Set());
+      setNodeRelevance(new Map());
+    } finally {
+      setSearchLoading(false);
     }
   };
 
@@ -453,6 +772,18 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
     setHighlightNodes(new Set());
     setHighlightLinks(new Set());
     setHoverNode(null);
+    setNodeRelevance(new Map());
+    setSearchError(null);
+    setSearchLoading(false);
+    setSearchResults([]);
+    setCategoryResults([]);
+    setIsFadingOut(true);
+    setTimeout(() => {
+      setShowNotification(false);
+      setSearchSummary("");
+      setIsFadingOut(false);
+    }, 500);
+    setCurrentQuery(""); // Clear current query tracking
   };
 
   // Helper: Interpolate between two colors
@@ -463,19 +794,46 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
     return `rgb(${r}, ${g}, ${b})`;
   };
 
-  const getNodeColor = (node: any) => {
-    // Zinc-300 (light) to Zinc-900 (dark)
-    const heatStart = [212, 212, 216]; 
-    const heatEnd = [24, 24, 27];
+  // Helper: Get similarity-based color (green to yellow)
+  const getSimilarityColor = (similarity: number) => {
+    // Normalize similarity to 0-1 range (assuming similarity is already 0-1)
+    const normalized = Math.max(0, Math.min(1, similarity));
+    
+    // Green (high similarity): rgb(34, 197, 94) = #22c55e
+    // Yellow (low similarity): rgb(234, 179, 8) = #eab308
+    const green = [34, 197, 94];
+    const yellow = [234, 179, 8];
+    
+    // Invert so higher similarity = more green
+    // Lower similarity = more yellow
+    return interpolateColor(normalized, yellow, green);
+  };
 
-    // 1. Hover Mode
+  const getNodeColor = (node: any) => {
+    // 1. Search Mode with similarity scores - use green-to-yellow gradient
+    if (highlightNodes.size > 0 && nodeRelevance.size > 0) {
+      if (highlightNodes.has(node.id)) {
+        const similarity = nodeRelevance.get(node.id) || 0;
+        if (similarity > 0) {
+          return getSimilarityColor(similarity);
+        }
+        // If node is highlighted but no similarity score (shouldn't happen, but fallback)
+        if (node.group === 0) return "#52525b";
+        if (node.group === 1) return "#a1a1aa";
+        return "#d4d4d8";
+      }
+      // Dim non-matching nodes
+      return "#f4f4f5";
+    }
+
+    // 2. Hover Mode
     if (hoverNode) {
         if (highlightNodes.has(node.id)) {
-             // If filtered, show heat color even on hover for context?
+             // If filtered, show similarity color even on hover for context
              if (nodeRelevance.size > 0) {
                  const score = nodeRelevance.get(node.id) || 0;
                  if (score > 0) {
-                     return interpolateColor(score, heatStart, heatEnd);
+                     return getSimilarityColor(score);
                  }
              }
              if (node.group === 0) return "#52525b";
@@ -485,14 +843,7 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
         return "#f4f4f5";
     }
 
-    // 2. Filter Mode
-    if (nodeRelevance.size > 0) {
-         const score = nodeRelevance.get(node.id) || 0;
-         if (score === 0) return "#f4f4f5";
-         return interpolateColor(score, heatStart, heatEnd);
-    }
-
-    // 3. Search Mode
+    // 3. Search Mode (without similarity scores - fallback)
     if (highlightNodes.size > 0) {
         if (highlightNodes.has(node.id)) {
              if (node.group === 0) return "#52525b";
@@ -560,7 +911,8 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
 
         // Label/Text Styling
         nodeCanvasObject={(node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
-          const label = node.id;
+          // Use title if available, otherwise use id
+          const label = node.title || node.name || node.id;
           const fontSize = 12 / globalScale;
 
           // Calculate colors
@@ -589,9 +941,10 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
           }
 
           // Text Label Visibility (Smooth Fade)
+          // Always show labels for highlighted nodes (search results)
           let opacity = 0;
           
-          if (isHovered || (isHighlighted && !isDimmed)) {
+          if (isHovered || (isHighlighted && !isDimmed) || isRelevant) {
              opacity = 1;
           } else if (!isDimmed) {
              if (node.group === 0) {
@@ -642,17 +995,59 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
         linkDirectionalParticles={hoverNode ? 4 : 0}
         linkDirectionalParticleWidth={2}
 
-        // Physics - adjusted for floating feel
-        d3VelocityDecay={0.6} // High friction to reduce bouncing
-        d3AlphaDecay={0.005} // Slow cooldown for gentle drift
-        cooldownTicks={300}
+        // Physics - adjusted for proper grouping and stability
+        d3VelocityDecay={0.3} // Lower friction to allow nodes to move to their positions
+        d3AlphaDecay={0.01} // Slower decay to give more time for positioning
+        cooldownTicks={400} // More ticks to allow proper positioning
+        warmupTicks={0} // No warmup
         onNodeHover={handleNodeHover}
         onNodeClick={handleNodeClick}
       />
 
-      <GraphChat onSearch={handleSearch} onClear={handleClearSearch} />
+      <GraphChat 
+        onSearch={handleSearch} 
+        onClear={handleClearSearch}
+        loading={searchLoading}
+        error={searchError}
+      />
+
+      {/* AI Summary Notification - ChatGPT style */}
+      {searchSummary && showNotification && (
+        <div 
+          className={`absolute top-6 left-1/2 -translate-x-1/2 max-w-2xl w-[90%] z-50 transition-all duration-500 ease-in-out ${
+            isFadingOut 
+              ? 'opacity-0 -translate-y-4 pointer-events-none' 
+              : 'opacity-100 translate-y-0'
+          }`}
+        >
+          <div className="bg-white/80 backdrop-blur-xl border border-white/20 rounded-2xl shadow-2xl overflow-hidden">
+            <div className="p-4 flex items-start gap-3">
+              {/* Orion Logo/Avatar - using favicon */}
+              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-white/90 flex items-center justify-center shadow-lg overflow-hidden p-1">
+                <Image 
+                  src="/favicon.ico" 
+                  alt="Orion" 
+                  width={24} 
+                  height={24}
+                  className="w-full h-full object-contain"
+                  unoptimized
+                />
+              </div>
+              
+              {/* Message Content */}
+              <div className="flex-1 min-w-0">
+                <p className="text-sm text-gray-800 leading-relaxed">
+                  {searchSummary}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 });
 
 KnowledgeGraph.displayName = "KnowledgeGraph";
+
+export default KnowledgeGraph;

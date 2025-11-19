@@ -50,7 +50,7 @@ export function InterestsStep({ onNext, onBack, className, ...props }: Interests
       {...props}
     >
       <div className="flex flex-col space-y-8 text-left">
-        <div className="space-y-2 text-center mb-8">
+        <div className="space-y-2 text-center mb-8 mt-4">
           <h2 className="text-3xl font-medium text-white">Personalize your feed</h2>
           <p className="text-white/60">Tell us what you care about and how you learn.</p>
         </div>

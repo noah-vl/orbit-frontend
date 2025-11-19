@@ -1,103 +1,43 @@
-import { Badge } from "@/components/ui/badge";
-import { FeedCard, FeedItem } from "@/components/features/feed/feed-card";
+"use client";
 
-const feedItems: FeedItem[] = [
-  {
-    id: "1",
-    author: {
-      name: "Sarah Chen",
-      handle: "@schen_product",
-      avatar: "https://github.com/shadcn.png", // Placeholder
-      role: "Product Lead",
-    },
-    type: "article",
-    timestamp: "2h ago",
-    isRead: false,
-    content: (
-      <>
-        <p className="mb-4">
-          Found this interesting analysis on <span className="font-medium text-primary">#AI</span> adoption in enterprise workflows.
-          Relevant for our Q4 roadmap, specifically the "Context-Aware" feature set.
-        </p>
-        <div className="rounded-lg border bg-muted/50 p-4">
-           <p className="font-semibold text-base mb-2">The State of AI in SaaS 2025</p>
-           <p className="text-muted-foreground line-clamp-2 leading-relaxed">
-             Enterprise adoption is shifting from generative chat to integrated workflow automation. Key drivers are context retention and permission management...
-           </p>
-        </div>
-      </>
-    ),
-    taggedUsers: [
-      { name: "Alex Rivera", handle: "@arivera_eng" },
-      { name: "Team Lead", handle: "@engineering" }
-    ]
-  },
-  {
-    id: "2",
-    author: {
-      name: "Alex Rivera",
-      handle: "@arivera_eng",
-      avatar: "", // Fallback
-      role: "Engineering Manager",
-    },
-    type: "note",
-    timestamp: "5h ago",
-    isRead: true,
-    content: (
-      <p>
-        Just pushed the new <span className="text-primary font-medium">Graph Visualization</span> engine to staging. 
-        Performance is up 40% on large datasets. Please review before the demo tomorrow! 🚀
-      </p>
-    ),
-    taggedUsers: [
-      { name: "Sarah Chen", handle: "@schen_product" },
-      { name: "Design Team", handle: "@design" }
-    ]
-  },
-  {
-    id: "3",
-    author: {
-      name: "Orbit",
-      handle: "@solon_system",
-      avatar: "", 
-      role: "System",
-    },
-    type: "mention",
-    timestamp: "1d ago",
-    isRead: true,
-    content: (
-      <p>
-        New mention in <span className="font-medium">#customer-feedback</span> on Slack.
-        <br/>
-        "Ideally, I'd like to see a breakdown of my team's knowledge gaps. Is that on the roadmap?"
-      </p>
-    ),
-    taggedUsers: [
-      { name: "Product Team", handle: "@product" }
-    ]
-  }
-];
+import { useRef, useState } from "react";
+import { KnowledgeGraph, KnowledgeGraphRef } from "@/components/features/graph/knowledge-graph";
+import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import { ZoomIn, ZoomOut, RefreshCw } from "lucide-react";
 
 export default function DashboardPage() {
+  const graphRef = useRef<KnowledgeGraphRef>(null);
+  const [showMockData, setShowMockData] = useState(false);
+
   return (
-    <div className="w-full">
+    <div className="flex flex-col h-full">
       <div className="sticky top-0 z-10 bg-background border-b">
-        <div className="flex items-center justify-between max-w-5xl mx-auto px-6 py-6 md:px-12 md:py-8">
-          <div>
-            <h1 className="text-4xl font-bold tracking-tight mb-2">Feed</h1>
-            <p className="text-muted-foreground text-base">
-              Your personalized knowledge stream.
-            </p>
+        <div className="flex items-center justify-between px-6 py-3 md:px-8 md:py-4">
+          <h1 className="text-2xl font-bold tracking-tight">Graph View</h1>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center space-x-2 mr-2">
+              <Switch id="mock-data" checked={showMockData} onCheckedChange={setShowMockData} />
+              <Label htmlFor="mock-data">Show Mock Data</Label>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" size="icon" onClick={() => graphRef.current?.zoomIn()}>
+                <ZoomIn className="h-4 w-4" />
+              </Button>
+              <Button variant="outline" size="icon" onClick={() => graphRef.current?.zoomOut()}>
+                <ZoomOut className="h-4 w-4" />
+              </Button>
+              <Button variant="outline" size="icon" onClick={() => graphRef.current?.reset()}>
+                <RefreshCw className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
-          <Badge variant="outline" className="font-mono px-3 py-1">Live</Badge>
         </div>
       </div>
-      
-      <div className="space-y-6 max-w-5xl mx-auto px-6 md:px-12 py-6 md:py-8">
-        {feedItems.map((item) => (
-          <FeedCard key={item.id} item={item} />
-        ))}
+      <div className="flex-1 overflow-hidden">
+        <KnowledgeGraph ref={graphRef} showMockData={showMockData} />
       </div>
     </div>
-  )
+  );
 }
