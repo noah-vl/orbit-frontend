@@ -47,7 +47,7 @@ export function UserInfoStep({ onNext, className, ...props }: UserInfoStepProps)
           <TiltedCard
             imageSrc={transparentBackground}
             altText="Profile Card"
-            captionText="Solon Member Card"
+            captionText="Orbit Member Card"
             containerHeight="400px"
             containerWidth="280px"
             imageHeight="400px"

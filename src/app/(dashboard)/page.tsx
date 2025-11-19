@@ -57,7 +57,7 @@ const feedItems: FeedItem[] = [
   {
     id: "3",
     author: {
-      name: "Solon Bot",
+      name: "Orbit",
       handle: "@solon_system",
       avatar: "", 
       role: "System",
