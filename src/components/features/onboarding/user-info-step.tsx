@@ -19,13 +19,14 @@ const ROLES_BY_DEPARTMENT: Record<string, string[]> = {
 }
 
 interface UserInfoStepProps extends HTMLMotionProps<"div"> {
-  onNext: () => void
+  onNext: (data?: { name: string; email: string; password: string; department: string; role: string }) => void
 }
 
 export function UserInfoStep({ onNext, className, ...props }: UserInfoStepProps) {
   const [formData, setFormData] = useState({
     name: "",
     email: "",
+    password: "",
     department: "",
     role: ""
   })
@@ -125,6 +126,20 @@ export function UserInfoStep({ onNext, className, ...props }: UserInfoStepProps)
                 onChange={(e) => setFormData({ ...formData, email: e.target.value })}
               />
             </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="password" className="text-white/90 text-base">Password</Label>
+              <Input 
+                id="password" 
+                type="password"
+                placeholder="Create a password"
+                className="bg-white/10 border-white/20 text-white placeholder:text-white/40 focus-visible:ring-white/30 focus-visible:border-white/40 h-12 text-lg"
+                value={formData.password}
+                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                minLength={6}
+              />
+              <p className="text-xs text-white/50">Must be at least 6 characters</p>
+            </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
@@ -167,8 +182,13 @@ export function UserInfoStep({ onNext, className, ...props }: UserInfoStepProps)
 
           <div>
             <Button 
-              onClick={onNext}
-              className="w-full bg-white text-black hover:bg-white/90 h-12 text-lg font-medium transition-transform active:scale-95"
+              onClick={() => {
+                if (formData.name && formData.email && formData.password && formData.department && formData.role) {
+                  onNext(formData)
+                }
+              }}
+              disabled={!formData.name || !formData.email || !formData.password || !formData.department || !formData.role || formData.password.length < 6}
+              className="w-full bg-white text-black hover:bg-white/90 h-12 text-lg font-medium transition-transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Continue
             </Button>

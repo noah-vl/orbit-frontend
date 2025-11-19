@@ -8,6 +8,8 @@ import Highlight from "@tiptap/extension-highlight";
 import Mention from "@tiptap/extension-mention";
 import { Markdown } from "tiptap-markdown";
 import "highlight.js/styles/github-dark.css";
+import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/lib/supabase";
 
 interface ArticleReaderProps {
     articleId: string;
@@ -31,10 +33,12 @@ interface TextHighlight {
     color: string;
 }
 
-const ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhsdHFhYnJsbWZhbG9zZXd2amJ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM1NDYwNDcsImV4cCI6MjA3OTEyMjA0N30.RHHhm4Whc8uJ1lwPwYqC1KU8B_m6hBm_XC0MCPbNiWg";
+const SUPABASE_URL = 'https://xltqabrlmfalosewvjby.supabase.co'
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhsdHFhYnJsbWZhbG9zZXd2amJ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM1NDYwNDcsImV4cCI6MjA3OTEyMjA0N30.RHHhm4Whc8uJ1lwPwYqC1KU8B_m6hBm_XC0MCPbNiWg'
 
 export function ArticleReader({ articleId }: ArticleReaderProps) {
     const router = useRouter();
+    const { teamId, session } = useAuth();
     const [article, setArticle] = useState<any>(null);
     const [comments, setComments] = useState<Comment[]>([]);
     const [highlights, setHighlights] = useState<TextHighlight[]>([]);
@@ -79,17 +83,29 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
         fetchArticle();
         fetchComments();
         fetchHighlights();
-        fetchTeamMembers();
-    }, [articleId]);
+        if (teamId) {
+            fetchTeamMembers();
+        }
+    }, [articleId, teamId]);
 
     const fetchTeamMembers = async () => {
+        if (!teamId) {
+            console.error("No team_id available");
+            return;
+        }
+
         try {
-            const response = await fetch(
-                `https://xltqabrlmfalosewvjby.supabase.co/rest/v1/profiles?team_id=eq.446f4253-c7e9-46f5-bdaf-99c36d1881e0&select=id,full_name,role`,
-                { headers: { apikey: ANON_KEY } }
-            );
-            const data = await response.json();
-            setTeamMembers(data);
+            const { data, error } = await supabase
+                .from("profiles")
+                .select("id, full_name, role")
+                .eq("team_id", teamId);
+
+            if (error) {
+                console.error("Error fetching team members:", error);
+                return;
+            }
+
+            setTeamMembers(data || []);
         } catch (error) {
             console.error("Error fetching team members:", error);
         }
@@ -546,8 +562,8 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
                 `https://xltqabrlmfalosewvjby.supabase.co/functions/v1/get_article?id=${articleId}&role=business`,
                 { 
                     headers: { 
-                        apikey: ANON_KEY,
-                        Authorization: `Bearer ${ANON_KEY}`
+                        apikey: SUPABASE_ANON_KEY,
+                        Authorization: session?.access_token ? `Bearer ${session.access_token}` : `Bearer ${SUPABASE_ANON_KEY}`
                     } 
                 }
             );
@@ -571,7 +587,7 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
             // Fetch comments with author names by joining with profiles
             const response = await fetch(
                 `https://xltqabrlmfalosewvjby.supabase.co/rest/v1/comments?article_id=eq.${articleId}&select=*,profiles!comments_author_id_fkey(full_name),mentioned_users&order=created_at.desc`,
-                { headers: { apikey: ANON_KEY } }
+                { headers: { apikey: SUPABASE_ANON_KEY, ...(session?.access_token && { Authorization: `Bearer ${session.access_token}` }) } }
             );
             const data = await response.json();
             console.log('Fetched comments:', data);
@@ -595,7 +611,7 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
         try {
             const response = await fetch(
                 `https://xltqabrlmfalosewvjby.supabase.co/rest/v1/highlights?article_id=eq.${articleId}&select=*`,
-                { headers: { apikey: ANON_KEY } }
+                { headers: { apikey: SUPABASE_ANON_KEY, ...(session?.access_token && { Authorization: `Bearer ${session.access_token}` }) } }
             );
             const data = await response.json();
             setHighlights(data);
@@ -611,7 +627,8 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
             await fetch("https://xltqabrlmfalosewvjby.supabase.co/rest/v1/highlights", {
                 method: "POST",
                 headers: {
-                    apikey: ANON_KEY,
+                    apikey: SUPABASE_ANON_KEY,
+                    ...(session?.access_token && { Authorization: `Bearer ${session.access_token}` }),
                     "Content-Type": "application/json",
                     Prefer: "return=minimal",
                 },
@@ -641,7 +658,8 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
                 const highlightResponse = await fetch("https://xltqabrlmfalosewvjby.supabase.co/rest/v1/highlights", {
                     method: "POST",
                     headers: {
-                        apikey: ANON_KEY,
+                        apikey: SUPABASE_ANON_KEY,
+                    ...(session?.access_token && { Authorization: `Bearer ${session.access_token}` }),
                         "Content-Type": "application/json",
                         Prefer: "return=representation",
                     },
@@ -712,7 +730,8 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
             const commentResponse = await fetch("https://xltqabrlmfalosewvjby.supabase.co/rest/v1/comments", {
                 method: "POST",
                 headers: {
-                    apikey: ANON_KEY,
+                    apikey: SUPABASE_ANON_KEY,
+                    ...(session?.access_token && { Authorization: `Bearer ${session.access_token}` }),
                     "Content-Type": "application/json",
                     Prefer: "return=representation",
                 },

@@ -6,6 +6,7 @@ import { GraphChat } from "@/components/features/graph/graph-chat";
 import { GraphFilter } from "@/components/features/graph/graph-filter";
 import { generateData } from "@/components/features/graph/mock-data";
 import { Eye, EyeOff, Tag, User } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
 
 // Helper for deterministic random values based on string seed
 const getStableRandom = (seed: string) => {
@@ -32,26 +33,54 @@ export interface KnowledgeGraphRef {
 // Mock Data is now imported from mock-data.ts
 
 // Fetch real data from Supabase
-const fetchGraphData = async () => {
+const fetchGraphData = async (teamId: string | null, accessToken: string | null) => {
+  if (!teamId) {
+    console.error('fetchGraphData: No team_id available');
+    return { nodes: [], links: [] };
+  }
+
+  console.log('fetchGraphData: Requesting graph for team_id:', teamId);
+
   try {
+    const headers: HeadersInit = {
+      'Content-Type': 'application/json',
+    };
+
+    if (accessToken) {
+      headers['Authorization'] = `Bearer ${accessToken}`;
+      console.log('fetchGraphData: Using access token');
+    } else {
+      console.warn('fetchGraphData: No access token provided');
+    }
+
+    const requestBody = { team_id: teamId };
+    console.log('fetchGraphData: Request body:', requestBody);
+
     const response = await fetch('https://xltqabrlmfalosewvjby.supabase.co/functions/v1/get_graph', {
       method: 'POST',
+      headers,
+      body: JSON.stringify(requestBody),
     });
 
+    console.log('fetchGraphData: Response status:', response.status, response.statusText);
+
     if (!response.ok) {
-      console.error('Failed to fetch graph data');
+      const errorText = await response.text();
+      console.error('fetchGraphData: Failed to fetch graph data:', response.status, errorText);
       return { nodes: [], links: [] };
     }
 
     const data = await response.json();
+    console.log('fetchGraphData: Success! Received', data.nodes?.length || 0, 'nodes and', data.links?.length || 0, 'links');
     return data;
   } catch (error) {
-    console.error('Error fetching graph data:', error);
+    console.error('fetchGraphData: Error fetching graph data:', error);
     return { nodes: [], links: [] };
   }
 };
 
 export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boolean }>(({ showMockData = false }, ref) => {
+  const { teamId, session } = useAuth();
   const [data, setData] = useState<{ nodes: any[], links: any[] }>({ nodes: [], links: [] });
   const [fetchedData, setFetchedData] = useState<{ nodes: any[], links: any[] }>({ nodes: [], links: [] });
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
@@ -100,11 +129,22 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
   };
 
   useEffect(() => {
-    // Fetch real data once
-    fetchGraphData().then(data => {
-      setFetchedData(data);
-    });
-  }, []);
+    // Fetch real data when teamId is available
+    console.log('KnowledgeGraph: teamId =', teamId, 'session =', session);
+    if (teamId && !showMockData) {
+      const accessToken = session?.access_token || null;
+      console.log('KnowledgeGraph: Fetching graph data for team:', teamId);
+      fetchGraphData(teamId, accessToken).then(data => {
+        console.log('KnowledgeGraph: Received data:', data);
+        console.log('KnowledgeGraph: Number of nodes:', data.nodes?.length, 'Number of links:', data.links?.length);
+        setFetchedData(data);
+      }).catch(error => {
+        console.error('KnowledgeGraph: Error fetching data:', error);
+      });
+    } else {
+      console.warn('KnowledgeGraph: Not fetching - teamId:', teamId, 'showMockData:', showMockData);
+    }
+  }, [teamId, session, showMockData]);
 
   useEffect(() => {
     const updateDimensions = () => {

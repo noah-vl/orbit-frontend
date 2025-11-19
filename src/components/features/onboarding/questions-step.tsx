@@ -22,7 +22,7 @@ import { Badge } from "@/components/ui/badge"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 
 interface QuestionsStepProps extends HTMLMotionProps<"div"> {
-  onNext: () => void
+  onNext: (data?: { responsibilities: string[]; decisionInvolvement: string; updateTypes: string[] }) => void
   onBack?: () => void
 }
 
@@ -151,10 +151,17 @@ export function QuestionsStep({ onNext, onBack, className, ...props }: Questions
 
         <div className="pt-4">
           <Button 
-            onClick={onNext}
-            className="w-full bg-white text-black hover:bg-white/90 h-12 text-lg font-medium transition-transform active:scale-95"
+            onClick={() => {
+              onNext({
+                responsibilities,
+                decisionInvolvement,
+                updateTypes,
+              })
+            }}
+            disabled={!decisionInvolvement}
+            className="w-full bg-white text-black hover:bg-white/90 h-12 text-lg font-medium transition-transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Continue
+            Complete
           </Button>
           {onBack && (
             <Button 

@@ -23,7 +23,19 @@ function OnboardingContent() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [hasJoined, setHasJoined] = useState(false)
-  const totalSteps = 4
+  const [userInfo, setUserInfo] = useState<{
+    name: string
+    email: string
+    password: string
+    department: string
+    role: string
+  } | null>(null)
+  const [questionsData, setQuestionsData] = useState<{
+    responsibilities: string[]
+    decisionInvolvement: string
+    updateTypes: string[]
+  } | null>(null)
+  const totalSteps = 2 // Only 2 steps for now
 
   // Check if user is already authenticated
   useEffect(() => {
@@ -54,13 +66,19 @@ function OnboardingContent() {
     }
   }, [inviteToken])
 
-  const handleNext = () => {
+  const handleNext = (data?: any) => {
     setDirection(1)
     setCurrentStep((prev) => {
       const nextStep = Math.min(prev + 1, totalSteps)
-      // On the last step, handle completion
-      if (nextStep === totalSteps) {
-        handleComplete()
+      // Store step data
+      if (prev === 1 && data) {
+        setUserInfo(data)
+      } else if (prev === 2 && data) {
+        setQuestionsData(data)
+      }
+      // On the last step (step 2), handle completion
+      if (nextStep > totalSteps) {
+        handleComplete(data)
       }
       return nextStep
     })
@@ -71,38 +89,118 @@ function OnboardingContent() {
     setCurrentStep((prev) => Math.max(prev - 1, 1))
   }
 
-  const handleComplete = async () => {
-    // If there's an invite token, join the team after onboarding
-    if (inviteToken) {
-      await handleJoinTeam()
-    } else {
-      // Otherwise, redirect to dashboard
-      router.push("/")
-    }
-  }
-
-  const handleJoinTeam = async () => {
-    if (!inviteToken) return
-
-    const authToken = localStorage.getItem("supabase.auth.token") || 
-                     sessionStorage.getItem("supabase.auth.token")
-    
-    if (!authToken) {
-      // User needs to authenticate first - for now, just redirect
-      // In the future, you might want to show an auth form
-      setError("Please sign in to join the team")
-      return
+  const handleComplete = async (questionsData?: any) => {
+    if (questionsData) {
+      setQuestionsData(questionsData)
     }
 
     setLoading(true)
     setError(null)
 
     try {
-      const response = await fetch(`${SUPABASE_URL}/functions/v1/join_team`, {
+      // If there's an invite token, create account and join team
+      if (inviteToken && userInfo) {
+        await createAccountAndJoinTeam()
+      } else {
+        // Otherwise, just redirect to dashboard
+        router.push("/")
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "An error occurred")
+      setLoading(false)
+    }
+  }
+
+  const createAccountAndJoinTeam = async () => {
+    if (!inviteToken || !userInfo) {
+      throw new Error("Missing invite token or user info")
+    }
+
+    try {
+      // Step 1: Create user account
+      const signupResponse = await fetch(`${SUPABASE_URL}/auth/v1/signup`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${authToken}`,
+          "apikey": SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({
+          email: userInfo.email,
+          password: userInfo.password,
+          data: {
+            full_name: userInfo.name,
+          },
+        }),
+      })
+
+      if (!signupResponse.ok) {
+        const errorText = await signupResponse.text()
+        let errorData
+        try {
+          errorData = JSON.parse(errorText)
+        } catch {
+          errorData = { message: errorText }
+        }
+        throw new Error(errorData.error_description || errorData.message || "Failed to create account")
+      }
+
+      const signupData = await signupResponse.json()
+      console.log("Signup response:", signupData)
+      
+      // Try to get access token from signup response
+      let accessToken = signupData.access_token || 
+                       signupData.session?.access_token
+
+      // Always try to sign in after signup (in case email confirmation is required)
+      // This ensures we get a valid session
+      console.log("Attempting sign in after signup...")
+      const signInResponse = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "apikey": SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({
+          email: userInfo.email,
+          password: userInfo.password,
+        }),
+      })
+      
+      if (signInResponse.ok) {
+        const signInData = await signInResponse.json()
+        console.log("Sign in response:", signInData)
+        // Prefer sign-in token over signup token
+        const signInToken = signInData.access_token || 
+                           signInData.session?.access_token
+        if (signInToken) {
+          accessToken = signInToken
+        }
+      } else {
+        const errorText = await signInResponse.text()
+        console.error("Sign in error:", signInResponse.status, errorText)
+        // If sign-in fails but we have a token from signup, continue with that
+        if (!accessToken) {
+          throw new Error(`Failed to sign in: ${errorText}`)
+        }
+      }
+
+      if (!accessToken) {
+        console.error("Final signup data:", signupData)
+        throw new Error("Failed to get access token. Please check the browser console for details.")
+      }
+
+      // Store token
+      localStorage.setItem("supabase.auth.token", accessToken)
+
+      // Step 2: Update profile with additional info
+      // We'll do this after joining the team since the profile is created by join_team
+
+      // Step 3: Join the team
+      const joinResponse = await fetch(`${SUPABASE_URL}/functions/v1/join_team`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${accessToken}`,
           "apikey": SUPABASE_ANON_KEY,
         },
         body: JSON.stringify({
@@ -110,12 +208,58 @@ function OnboardingContent() {
         }),
       })
 
-      if (!response.ok) {
-        const errorData = await response.text()
+      if (!joinResponse.ok) {
+        const errorData = await joinResponse.text()
         throw new Error(errorData || "Failed to join team")
       }
 
-      const data = await response.json()
+      // Step 4: Update profile with role and interests
+      // Get user ID from the token or from signup response
+      let userId = signupData.user?.id || signupData.session?.user?.id
+      
+      // If we don't have userId, try to get it from the token
+      if (!userId && accessToken) {
+        try {
+          const userResponse = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+            headers: {
+              "Authorization": `Bearer ${accessToken}`,
+              "apikey": SUPABASE_ANON_KEY,
+            },
+          })
+          if (userResponse.ok) {
+            const userData = await userResponse.json()
+            userId = userData.id
+          }
+        } catch (err) {
+          console.error("Error fetching user:", err)
+        }
+      }
+      
+      if (userId) {
+        const profileUpdateResponse = await fetch(`${SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${accessToken}`,
+          "apikey": SUPABASE_ANON_KEY,
+        },
+          body: JSON.stringify({
+            role: userInfo.role,
+            interests: JSON.stringify({
+              department: userInfo.department,
+              responsibilities: questionsData?.responsibilities || [],
+              decisionInvolvement: questionsData?.decisionInvolvement || "",
+              updateTypes: questionsData?.updateTypes || [],
+            }),
+          }),
+        })
+
+        // Don't fail if profile update fails
+        if (!profileUpdateResponse.ok) {
+          console.error("Failed to update profile with additional info")
+        }
+      }
+
       setHasJoined(true)
       
       // Redirect to dashboard after a short delay
@@ -123,8 +267,7 @@ function OnboardingContent() {
         router.push("/")
       }, 2000)
     } catch (err) {
-      setError(err instanceof Error ? err.message : "An error occurred")
-      setLoading(false)
+      throw err
     }
   }
 
@@ -240,7 +383,7 @@ function OnboardingContent() {
                         x: { type: "spring", stiffness: 200, damping: 30 },
                         opacity: { duration: 0.3 }
                       }}
-                      onNext={handleNext}
+                      onNext={(data) => handleNext(data)}
                     />
                   )}
                   {currentStep === 2 && (
@@ -255,7 +398,7 @@ function OnboardingContent() {
                         x: { type: "spring", stiffness: 200, damping: 30 },
                         opacity: { duration: 0.3 }
                       }}
-                      onNext={handleNext}
+                      onNext={(data) => handleComplete(data)}
                       onBack={handleBack}
                     />
                   )}
@@ -281,6 +424,17 @@ function OnboardingContent() {
                   />
                 ))}
               </motion.div>
+              
+              {/* Loading indicator */}
+              {loading && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="mb-4 text-white/80"
+                >
+                  Creating your account...
+                </motion.div>
+              )}
             </div>
           )}
         </AnimatePresence>
