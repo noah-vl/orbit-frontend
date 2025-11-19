@@ -40,6 +40,7 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
     const [highlights, setHighlights] = useState<TextHighlight[]>([]);
     const [newComment, setNewComment] = useState("");
     const [commentMentions, setCommentMentions] = useState<Map<string, string>>(new Map()); // Map of mention text to user ID
+    const commentMentionsRef = useRef<Map<string, string>>(new Map()); // Ref to always have latest mentions
     const [loading, setLoading] = useState(true);
     const [teamMembers, setTeamMembers] = useState<Array<{ id: string; full_name: string; role: string | null }>>([]);
     const [showMentionSuggestions, setShowMentionSuggestions] = useState(false);
@@ -292,6 +293,11 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
             editor.commands.setContent(article.clean_content || "No content available");
         }
     }, [article, editor]);
+
+    // Sync commentMentions ref with state
+    useEffect(() => {
+        commentMentionsRef.current = commentMentions;
+    }, [commentMentions]);
 
     // Apply visual highlights to commented text
     // This needs to run after both article content is set AND highlights are loaded
@@ -656,11 +662,14 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
             // Get the actual text from contentEditable div (which has the mentions)
             const commentText = commentInputRef.current?.textContent || newComment;
             
+            // Use ref to get the latest mentions map
+            const currentMentions = commentMentionsRef.current;
+            
             console.log('Extracting mentions:', {
                 newComment,
                 commentText,
-                commentMentions: Array.from(commentMentions.entries()),
-                commentMentionsSize: commentMentions.size
+                commentMentions: Array.from(currentMentions.entries()),
+                commentMentionsSize: currentMentions.size
             });
             
             const mentionedUserIds: string[] = [];
@@ -675,24 +684,24 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
                 console.log('Found mention in text:', mentionText);
                 
                 // Check if this mention is in our map
-                if (commentMentions.has(mentionText)) {
-                    const userId = commentMentions.get(mentionText);
+                if (currentMentions.has(mentionText)) {
+                    const userId = currentMentions.get(mentionText);
                     if (userId && !foundMentions.has(userId)) {
                         mentionedUserIds.push(userId);
                         foundMentions.add(userId);
                         console.log('Added mention:', mentionText, '->', userId);
                     }
                 } else {
-                    console.log('Mention not in map:', mentionText, 'Available:', Array.from(commentMentions.keys()));
+                    console.log('Mention not in map:', mentionText, 'Available:', Array.from(currentMentions.keys()));
                 }
             }
             
             console.log('Final mentionedUserIds:', mentionedUserIds);
 
-            // Then create the comment linked to the highlight
+            // Create the comment linked to the highlight
             const commentPayload = {
                 article_id: articleId,
-                body: newComment,
+                body: commentText, // Use commentText from contentEditable, not newComment
                 author_id: "492acb7a-2cce-47d7-86d4-b2df4b1ddc69",
                 highlight_id: highlightId,
                 mentioned_users: mentionedUserIds.length > 0 ? mentionedUserIds : null,
@@ -705,7 +714,7 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
                 headers: {
                     apikey: ANON_KEY,
                     "Content-Type": "application/json",
-                    Prefer: "return=representation", // Changed to return the created comment
+                    Prefer: "return=representation",
                 },
                 body: JSON.stringify(commentPayload),
             });
@@ -717,7 +726,7 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
             setCommentMentions(new Map());
             setSelectedText("");
             setShowToolbar(false);
-            setShowSidebar(true); // Show sidebar after adding comment
+            setShowSidebar(true);
             if (commentInputRef.current) {
                 commentInputRef.current.textContent = "";
             }
