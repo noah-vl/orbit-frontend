@@ -8,29 +8,55 @@ import Highlight from "@tiptap/extension-highlight";
 import Mention from "@tiptap/extension-mention";
 import { Markdown } from "tiptap-markdown";
 import "highlight.js/styles/github-dark.css";
+
+const CustomHighlight = Highlight.extend({
+    addAttributes() {
+        return {
+            ...this.parent?.(),
+            'data-highlight-id': {
+                default: null,
+                parseHTML: element => element.getAttribute('data-highlight-id'),
+                renderHTML: attributes => {
+                    if (!attributes['data-highlight-id']) {
+                        return {}
+                    }
+                    // Get the color class from attributes, default to yellow
+                    const colorClass = attributes['data-highlight-color'] || 'bg-yellow-200/50 hover:bg-yellow-200';
+                    return {
+                        'data-highlight-id': attributes['data-highlight-id'],
+                        'class': `${colorClass} transition-colors cursor-pointer`,
+                        'style': 'color: inherit'
+                    }
+                },
+            },
+            'data-highlight-color': {
+                default: null,
+                parseHTML: element => element.getAttribute('data-highlight-color'),
+                renderHTML: attributes => {
+                    if (!attributes['data-highlight-color']) {
+                        return {}
+                    }
+                    return {
+                        'data-highlight-color': attributes['data-highlight-color']
+                    }
+                },
+            },
+        }
+    }
+});
+
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { motion } from "framer-motion";
+import { Sparkles, FileText, Link as LinkIcon, ArrowLeft } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
+import { CommentSidebar, CommentSidebarRef } from "./CommentSidebar";
+import { HighlightToolbar } from "./HighlightToolbar";
+import { Comment, TextHighlight } from "./types";
 
 interface ArticleReaderProps {
     articleId: string;
-}
-
-interface Comment {
-    id: string;
-    body: string;
-    created_at: string;
-    author_id: string;
-    highlight_id?: string;
-    author_name?: string;
-    mentioned_users?: string[];
-}
-
-interface TextHighlight {
-    id: string;
-    start_offset: number;
-    end_offset: number;
-    text_content: string;
-    color: string;
 }
 
 const SUPABASE_URL = 'https://xltqabrlmfalosewvjby.supabase.co'
@@ -38,30 +64,32 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 export function ArticleReader({ articleId }: ArticleReaderProps) {
     const router = useRouter();
-    const { teamId, session } = useAuth();
+    const { teamId, session, user } = useAuth();
+    const currentUserId = user?.id;
     const [article, setArticle] = useState<any>(null);
     const [comments, setComments] = useState<Comment[]>([]);
     const [highlights, setHighlights] = useState<TextHighlight[]>([]);
-    const [newComment, setNewComment] = useState("");
-    const [commentMentions, setCommentMentions] = useState<Map<string, string>>(new Map()); // Map of mention text to user ID
-    const commentMentionsRef = useRef<Map<string, string>>(new Map()); // Ref to always have latest mentions
+    const commentsRef = useRef<Comment[]>([]); // Ref to always have latest comments
+    const highlightsRef = useRef<TextHighlight[]>([]); // Ref to always have latest highlights
+    const commentSidebarRef = useRef<CommentSidebarRef>(null);
     const [loading, setLoading] = useState(true);
     const [teamMembers, setTeamMembers] = useState<Array<{ id: string; full_name: string; role: string | null }>>([]);
-    const [showMentionSuggestions, setShowMentionSuggestions] = useState(false);
-    const [mentionQuery, setMentionQuery] = useState("");
-    const [mentionPosition, setMentionPosition] = useState({ start: 0, end: 0 });
-    const commentInputRef = useRef<HTMLDivElement>(null);
     const [showToolbar, setShowToolbar] = useState(false);
     const [showSidebar, setShowSidebar] = useState(true);
     const [toolbarPosition, setToolbarPosition] = useState({ x: 0, y: 0 });
     const [selectedText, setSelectedText] = useState("");
-
+    const [activeTab, setActiveTab] = useState("insights");
+    const [cursorTooltip, setCursorTooltip] = useState<{ show: boolean; x: number; y: number }>({ show: false, x: 0, y: 0 });
+    const [selectedCommentId, setSelectedCommentId] = useState<string | null>(null);
+    const [replyingToId, setReplyingToId] = useState<string | null>(null);
+    const [replyText, setReplyText] = useState<Map<string, string>>(new Map());
+    
     const editor = useEditor({
         extensions: [
             StarterKit,
             Markdown,
-            Highlight.configure({
-                multicolor: true,
+            CustomHighlight.configure({
+                multicolor: false,
             }),
             Mention.configure({
                 HTMLAttributes: {
@@ -74,7 +102,7 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
         immediatelyRender: false, // Fix SSR hydration
         editorProps: {
             attributes: {
-                class: "prose prose-lg dark:prose-invert max-w-none focus:outline-none",
+                class: "prose prose-lg max-w-none focus:outline-none",
             },
         },
     });
@@ -111,198 +139,6 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
         }
     };
 
-    // Helper functions for contentEditable
-    const getCaretPosition = (element: HTMLElement, range: Range): number => {
-        const preCaretRange = range.cloneRange();
-        preCaretRange.selectNodeContents(element);
-        preCaretRange.setEnd(range.endContainer, range.endOffset);
-        return preCaretRange.toString().length;
-    };
-
-    const setCaretPosition = (element: HTMLElement, position: number) => {
-        const range = document.createRange();
-        const sel = window.getSelection();
-        let charCount = 0;
-        const nodeStack: Node[] = [element];
-        let node: Node | undefined;
-        let foundNode: Node | null = null;
-        let foundOffset = 0;
-        
-        while (!foundNode && (node = nodeStack.pop())) {
-            if (node.nodeType === 3) { // Text node
-                const nextCharCount = charCount + (node.textContent?.length || 0);
-                if (position <= nextCharCount) {
-                    foundNode = node;
-                    foundOffset = position - charCount;
-                } else {
-                    charCount = nextCharCount;
-                }
-            } else {
-                for (let i = node.childNodes.length - 1; i >= 0; i--) {
-                    nodeStack.push(node.childNodes[i]);
-                }
-            }
-        }
-        
-        if (foundNode) {
-            range.setStart(foundNode, foundOffset);
-            range.setEnd(foundNode, foundOffset);
-            sel?.removeAllRanges();
-            sel?.addRange(range);
-        }
-    };
-
-    const updateMentionHighlightsWithMap = (element: HTMLElement, mentionsMap: Map<string, string>) => {
-        if (mentionsMap.size === 0) {
-            // No mentions to highlight, just clear any existing ones
-            element.querySelectorAll('.mention-highlight').forEach(el => {
-                const parent = el.parentNode;
-                if (parent) {
-                    parent.replaceChild(document.createTextNode(el.textContent || ''), el);
-                    parent.normalize();
-                }
-            });
-            return;
-        }
-        
-        // Get plain text content (this will include text from highlight spans)
-        const fullText = element.textContent || '';
-        
-        // Find all mentions that should be highlighted
-        // Simply check if any mention from our map exists in the text
-        const mentionsToHighlight: Array<{ start: number; end: number; text: string }> = [];
-        
-        // Iterate through all mentions in our map and find them in the text
-        mentionsMap.forEach((userId, mentionText) => {
-            let searchIndex = 0;
-            while (true) {
-                const index = fullText.indexOf(mentionText, searchIndex);
-                if (index === -1) break;
-                
-                // Check if this is a valid mention position (starts with @ and is a word boundary)
-                const charBefore = index > 0 ? fullText[index - 1] : '';
-                const isWordStart = index === 0 || /[\s@]/.test(charBefore);
-                
-                if (isWordStart && fullText[index] === '@') {
-                    mentionsToHighlight.push({
-                        start: index,
-                        end: index + mentionText.length,
-                        text: mentionText
-                    });
-                }
-                
-                searchIndex = index + 1;
-            }
-        });
-        
-        // Sort by position to process in order
-        mentionsToHighlight.sort((a, b) => a.start - b.start);
-        
-        // Check existing highlights
-        const existingHighlights = element.querySelectorAll('.mention-highlight');
-        const existingHighlightPositions = new Set<string>();
-        existingHighlights.forEach(el => {
-            const text = el.textContent || '';
-            if (mentionsMap.has(text)) {
-                // Try to find position in full text
-                const pos = fullText.indexOf(text);
-                if (pos !== -1) {
-                    existingHighlightPositions.add(`${pos}-${pos + text.length}`);
-                }
-            }
-        });
-        
-        // Check if we need to update
-        const needsUpdate = mentionsToHighlight.some(m => {
-            const key = `${m.start}-${m.end}`;
-            return !existingHighlightPositions.has(key);
-        }) || existingHighlights.length !== mentionsToHighlight.length;
-        
-        if (!needsUpdate && mentionsToHighlight.length > 0) {
-            // All highlights are already correct, no need to update
-            return;
-        }
-        
-        // Save cursor position
-        const selection = window.getSelection();
-        let savedCursorPos = 0;
-        if (selection && selection.rangeCount > 0) {
-            try {
-                const range = selection.getRangeAt(0);
-                if (element.contains(range.commonAncestorContainer)) {
-                    savedCursorPos = getCaretPosition(element, range);
-                }
-            } catch (e) {
-                // Ignore errors
-            }
-        }
-        
-        // Clear all existing highlights
-        existingHighlights.forEach(el => {
-            const parent = el.parentNode;
-            if (parent) {
-                parent.replaceChild(document.createTextNode(el.textContent || ''), el);
-                parent.normalize();
-            }
-        });
-        
-        // Rebuild the element with plain text first
-        element.textContent = fullText;
-        
-        // Apply highlights in reverse order
-        if (mentionsToHighlight.length > 0) {
-            mentionsToHighlight.reverse().forEach(({ start, end, text: mentionText }) => {
-                const walker = document.createTreeWalker(
-                    element,
-                    NodeFilter.SHOW_TEXT,
-                    null
-                );
-                
-                let charCount = 0;
-                let node: Node | null;
-                while (node = walker.nextNode()) {
-                    const nodeText = node.textContent || '';
-                    const nodeStart = charCount;
-                    const nodeEnd = charCount + nodeText.length;
-                    
-                    if (start >= nodeStart && end <= nodeEnd) {
-                        const beforeText = nodeText.substring(0, start - nodeStart);
-                        const afterText = nodeText.substring(end - nodeStart);
-                        
-                        const parent = node.parentNode;
-                        if (parent) {
-                            if (beforeText) {
-                                parent.insertBefore(document.createTextNode(beforeText), node);
-                            }
-                            
-                            const mentionSpan = document.createElement('span');
-                            mentionSpan.className = 'mention-highlight font-medium text-blue-600 dark:text-blue-400';
-                            mentionSpan.textContent = mentionText;
-                            parent.insertBefore(mentionSpan, node);
-                            
-                            if (afterText) {
-                                parent.insertBefore(document.createTextNode(afterText), node);
-                            }
-                            parent.removeChild(node);
-                        }
-                        break;
-                    }
-                    charCount = nodeEnd;
-                }
-            });
-        }
-        
-        // Restore cursor position after highlights are applied
-        if (savedCursorPos > 0) {
-            setTimeout(() => {
-                setCaretPosition(element, savedCursorPos);
-            }, 0);
-        }
-    };
-
-    const updateMentionHighlights = (element: HTMLElement) => {
-        updateMentionHighlightsWithMap(element, commentMentions);
-    };
 
     useEffect(() => {
         if (article && editor) {
@@ -310,20 +146,85 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
         }
     }, [article, editor]);
 
-    // Sync commentMentions ref with state
+    // Sync refs with state
     useEffect(() => {
-        commentMentionsRef.current = commentMentions;
-    }, [commentMentions]);
+        commentsRef.current = comments;
+    }, [comments]);
+    
+    useEffect(() => {
+        highlightsRef.current = highlights;
+    }, [highlights]);
+
+    // Handle clicks on highlights - set up once and use refs for latest data
+    useEffect(() => {
+        const handleDocumentClick = (e: MouseEvent) => {
+            const target = e.target as HTMLElement;
+            const editorElement = document.querySelector('.ProseMirror');
+            
+            // Only handle clicks within the editor
+            if (!editorElement || !editorElement.contains(target)) {
+                return;
+            }
+            
+            const highlightElement = target.closest('[data-highlight-id]');
+            
+            if (highlightElement) {
+                const highlightId = highlightElement.getAttribute('data-highlight-id');
+                if (highlightId) {
+                    // Get fresh data from refs to avoid stale closures
+                    const currentHighlights = highlightsRef.current;
+                    const currentComments = commentsRef.current;
+                    
+                    const highlight = currentHighlights.find(h => h.id === highlightId);
+                    if (highlight) {
+                        // Search for comment in nested structure (threads)
+                        const findComment = (comments: Comment[]): Comment | null => {
+                            for (const comment of comments) {
+                                if (comment.highlight_id === highlight.id) {
+                                    return comment;
+                                }
+                                if (comment.replies && comment.replies.length > 0) {
+                                    const found = findComment(comment.replies);
+                                    if (found) return found;
+                                }
+                            }
+                            return null;
+                        };
+                        
+                        const comment = findComment(currentComments);
+                        if (comment) {
+                            setShowSidebar(true);
+                            setSelectedCommentId(comment.id);
+                            setTimeout(() => {
+                                const commentElement = document.getElementById(`comment-${comment.id}`);
+                                commentElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            }, 100);
+                            // Clear selection after 3 seconds
+                            setTimeout(() => {
+                                setSelectedCommentId(null);
+                            }, 3000);
+                        }
+                    }
+                }
+            }
+        };
+        
+        // Attach to document for better event delegation - this ensures it works even if highlights aren't in DOM yet
+        document.addEventListener('click', handleDocumentClick, true);
+        
+        return () => {
+            document.removeEventListener('click', handleDocumentClick, true);
+        }
+    }, []); // Empty deps - handler uses refs for latest data
 
     // Apply visual highlights to commented text
-    // This needs to run after both article content is set AND highlights are loaded
     useEffect(() => {
         if (!editor || !article || highlights.length === 0) return;
 
-        let isApplying = false; // Flag to prevent infinite loops
+        let isApplying = false;
 
         const applyHighlights = () => {
-            if (isApplying) return; // Prevent concurrent executions
+            if (isApplying) return;
             isApplying = true;
 
             const editorElement = document.querySelector('.ProseMirror');
@@ -332,157 +233,113 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
                 return;
             }
 
-            const handleHighlightClick = (e: MouseEvent) => {
-                const target = e.target as HTMLElement;
-                const highlightId = target.getAttribute('data-highlight-id');
-                
-                if (highlightId) {
-                    const highlight = highlights.find(h => h.id === highlightId);
-                    if (highlight) {
-                        const comment = comments.find(c => c.highlight_id === highlight.id);
-                        if (comment) {
-                            setShowSidebar(true);
-                            setTimeout(() => {
-                                const commentElement = document.getElementById(`comment-${comment.id}`);
-                                commentElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                            }, 100);
-                        }
-                    }
+            // 1. Clear existing highlights first using Tiptap transaction
+            // This ensures we start clean and allows the walker to find text properly
+            const { doc } = editor.state;
+            let tr = editor.state.tr;
+            let cleared = false;
+            
+            doc.descendants((node, pos) => {
+                if (node.isText && node.marks.find(m => m.type.name === 'highlight')) {
+                    tr.removeMark(pos, pos + node.nodeSize, editor.schema.marks.highlight);
+                    cleared = true;
                 }
-            };
-
-            // Check if highlights are already applied
-            const existingHighlights = editorElement.querySelectorAll('[data-highlight-id]');
-            if (existingHighlights.length >= highlights.length) {
-                isApplying = false;
-                return; // Already applied
+                return true;
+            });
+            
+            if (cleared) {
+                editor.view.dispatch(tr);
+                // Start a new transaction for adding marks
+                tr = editor.state.tr;
             }
 
-            // Remove existing highlight markers first
-            existingHighlights.forEach(el => {
-                const parent = el.parentNode;
-                if (parent) {
-                    const textNode = document.createTextNode(el.textContent || '');
-                    parent.replaceChild(textNode, el);
-                    parent.normalize();
-                }
-            });
-
-            // Apply highlights one by one, recreating the walker each time
-            // This ensures we find text nodes even after DOM modifications
+            // 2. Find text matches and calculate Tiptap positions
+            // We use the DOM walker to find text nodes because the search logic is robust
+            // and then convert to Tiptap positions.
+            
+            const rangesToHighlight: {from: number, to: number, id: string, colorClass: string}[] = [];
+            
             highlights.forEach(highlight => {
                 const textContent = highlight.text_content?.trim();
-                if (!textContent || textContent.length < 3) {
-                    console.log(`Skipping highlight ${highlight.id}: text too short`);
-                    return;
-                }
+                if (!textContent || textContent.length < 3) return;
+                
+                // Determine color based on whether it's the current user's highlight
+                const isCurrentUser = currentUserId && highlight.user_id === currentUserId;
+                const colorClass = isCurrentUser 
+                    ? 'bg-blue-200/50 hover:bg-blue-200' 
+                    : 'bg-yellow-200/50 hover:bg-yellow-200';
 
-                // Check if already highlighted
-                if (editorElement.querySelector(`[data-highlight-id="${highlight.id}"]`)) {
-                    console.log(`Highlight ${highlight.id} already exists`);
-                    return;
-                }
-
-                // Find text node containing this highlight text
+                // Build text map of AVAILABLE text nodes
+                // Since we cleared highlights, all text should be available (unless other marks exist)
+                const textNodes: { node: Node, start: number, length: number }[] = [];
+                let fullText = '';
+                
                 const walker = document.createTreeWalker(
                     editorElement,
                     NodeFilter.SHOW_TEXT,
-                    {
-                        acceptNode: (node) => {
-                            // Skip text nodes that are inside existing highlights
-                            let parent = node.parentNode;
-                            while (parent && parent !== editorElement) {
-                                if (parent instanceof HTMLElement && parent.hasAttribute('data-highlight-id')) {
-                                    return NodeFilter.FILTER_REJECT;
-                                }
-                                parent = parent.parentNode;
-                            }
-                            return NodeFilter.FILTER_ACCEPT;
-                        }
-                    }
+                    null
                 );
 
-                // First check if the text exists in the full editor content (might be split across nodes)
-                const fullEditorText = editorElement.textContent || '';
-                const textExistsInEditor = fullEditorText.includes(textContent);
-                
-                if (!textExistsInEditor) {
-                    console.log(`Text not found in editor for highlight ${highlight.id}. Searching for: "${textContent.substring(0, 50)}..."`);
-                    console.log(`Full editor text length: ${fullEditorText.length}, first 200 chars:`, fullEditorText.substring(0, 200));
-                }
-                
-                let found = false;
-                let node: Node | null;
-                let checkedNodes = 0;
-                
-                // Collect all text nodes first to check if text spans multiple nodes
-                const allTextNodes: Text[] = [];
+                let node;
                 while (node = walker.nextNode()) {
-                    allTextNodes.push(node as Text);
-                }
-                
-                // Try to find the text in a single node first
-                for (const textNode of allTextNodes) {
-                    checkedNodes++;
-                    const text = textNode.textContent || '';
-                    
-                    // Exact match only
-                    const index = text.indexOf(textContent);
-                    
-                    if (index !== -1) {
-                        // Verify the exact text exists at this position
-                        const actualText = text.substring(index, index + textContent.length);
-                        if (actualText !== textContent) {
-                            continue;
-                        }
-                        
-                        // Check if this text node's parent is already a highlight
-                        const parent = textNode.parentNode;
-                        if (parent instanceof HTMLElement && parent.hasAttribute('data-highlight-id')) {
-                            continue;
-                        }
-
-                        // Found an exact match in a single node - apply the highlight
-                        const beforeText = text.substring(0, index);
-                        const afterText = text.substring(index + textContent.length);
-
-                        // Create highlight mark element
-                        const highlightMark = document.createElement('mark');
-                        highlightMark.className = 'bg-yellow-200 dark:bg-yellow-900/40 cursor-pointer hover:bg-yellow-300 dark:hover:bg-yellow-900/60 transition-colors px-0.5 rounded';
-                        highlightMark.setAttribute('data-highlight-id', highlight.id);
-                        highlightMark.textContent = textContent;
-                        highlightMark.onclick = handleHighlightClick;
-
-                        // Replace the text node
-                        if (beforeText) {
-                            parent!.insertBefore(document.createTextNode(beforeText), textNode);
-                        }
-                        parent!.insertBefore(highlightMark, textNode);
-                        if (afterText) {
-                            parent!.insertBefore(document.createTextNode(afterText), textNode);
-                        }
-                        parent!.removeChild(textNode);
-
-                        found = true;
-                        console.log(`Applied highlight ${highlight.id} for text: "${textContent.substring(0, 50)}..."`);
-                        break;
+                    const text = node.textContent || '';
+                    if (text.length > 0) {
+                        textNodes.push({
+                            node,
+                            start: fullText.length,
+                            length: text.length
+                        });
+                        fullText += text;
                     }
                 }
 
-                if (!found) {
-                    // Get full editor text for debugging
-                    const fullEditorText = editorElement.textContent || '';
-                    const searchPreview = textContent.substring(0, 100);
-                    const editorPreview = fullEditorText.substring(0, 500);
-                    console.log(`Could not find text for highlight ${highlight.id}:`, {
-                        searchingFor: searchPreview,
-                        checkedNodes,
-                        editorPreview: editorPreview.substring(0, 200),
-                        highlightTextLength: textContent.length,
-                        highlightTextFirstChars: JSON.stringify(textContent.substring(0, 50)),
-                    });
+                const matchIndex = fullText.indexOf(textContent);
+                if (matchIndex === -1) return;
+
+                const matchEnd = matchIndex + textContent.length;
+
+                for (const { node, start, length } of textNodes) {
+                    const nodeEnd = start + length;
+
+                    if (nodeEnd > matchIndex && start < matchEnd) {
+                        const relativeStart = Math.max(0, matchIndex - start);
+                        const relativeEnd = Math.min(length, matchEnd - start);
+                        
+                        if (relativeEnd > relativeStart) {
+                            try {
+                                // Convert DOM position to Tiptap position
+                                // posAtDOM returns the position in the document
+                                const from = editor.view.posAtDOM(node, relativeStart);
+                                const to = editor.view.posAtDOM(node, relativeEnd);
+                                
+                                rangesToHighlight.push({
+                                    from,
+                                    to,
+                                    id: highlight.id,
+                                    colorClass: colorClass
+                                });
+                            } catch (e) {
+                                console.error('Failed to calculate highlight position:', e);
+                            }
+                        }
+                    }
                 }
             });
+
+            // 3. Apply all highlights in one transaction
+            if (rangesToHighlight.length > 0) {
+                // Get fresh transaction
+                tr = editor.state.tr;
+                
+                rangesToHighlight.forEach(({ from, to, id, colorClass }) => {
+                    tr.addMark(from, to, editor.schema.marks.highlight.create({ 
+                        'data-highlight-id': id,
+                        'data-highlight-color': colorClass
+                    }));
+                });
+                
+                editor.view.dispatch(tr);
+            }
 
             isApplying = false;
         };
@@ -493,7 +350,6 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
             if (editorElement && editorElement.textContent && editorElement.textContent.trim().length > 0) {
                 applyHighlights();
             } else {
-                // Retry once if editor not ready yet
                 setTimeout(() => {
                     const editorElement = document.querySelector('.ProseMirror');
                     if (editorElement && editorElement.textContent && editorElement.textContent.trim().length > 0) {
@@ -507,7 +363,7 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
             clearTimeout(timeoutId);
             isApplying = false;
         };
-    }, [editor, article, highlights, comments]);
+    }, [editor, article, highlights, activeTab, currentUserId]);
 
     // Handle text selection - only allow comments on article content
     useEffect(() => {
@@ -582,6 +438,47 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
         }
     };
 
+    // Helper function to organize comments into threads
+    const organizeCommentsIntoThreads = (comments: Comment[]): Comment[] => {
+        const commentMap = new Map<string, Comment>();
+        const rootComments: Comment[] = [];
+
+        // First pass: create map of all comments
+        comments.forEach(comment => {
+            commentMap.set(comment.id, { ...comment, replies: [] });
+        });
+
+        // Second pass: organize into threads
+        comments.forEach(comment => {
+            const commentWithReplies = commentMap.get(comment.id)!;
+            if (comment.parent_id && commentMap.has(comment.parent_id)) {
+                // This is a reply, add it to parent's replies
+                const parent = commentMap.get(comment.parent_id)!;
+                if (!parent.replies) {
+                    parent.replies = [];
+                }
+                parent.replies.push(commentWithReplies);
+            } else {
+                // This is a root comment
+                rootComments.push(commentWithReplies);
+            }
+        });
+
+        // Sort root comments by created_at (newest first)
+        rootComments.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+        
+        // Sort replies within each thread (oldest first for conversation flow)
+        const sortReplies = (comment: Comment) => {
+            if (comment.replies && comment.replies.length > 0) {
+                comment.replies.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+                comment.replies.forEach(sortReplies);
+            }
+        };
+        rootComments.forEach(sortReplies);
+
+        return rootComments;
+    };
+
     const fetchComments = async () => {
         try {
             // Fetch comments with author names by joining with profiles
@@ -597,11 +494,15 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
                     ...comment,
                     author_name: comment.profiles?.full_name || 'Unknown',
                     mentioned_users: comment.mentioned_users || [],
+                    parent_id: comment.parent_id || null,
                 };
                 console.log('Processed comment:', processed.id, 'mentioned_users:', processed.mentioned_users);
                 return processed;
             });
-            setComments(commentsWithAuthors);
+            
+            // Organize comments into threads
+            const threadedComments = organizeCommentsIntoThreads(commentsWithAuthors);
+            setComments(threadedComments);
         } catch (error) {
             console.error("Error fetching comments:", error);
         }
@@ -634,8 +535,8 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
                 },
                 body: JSON.stringify({
                     article_id: articleId,
-                    user_id: "492acb7a-2cce-47d7-86d4-b2df4b1ddc69",
-                    start_offset: 0, // TODO: Calculate actual offset
+                    user_id: currentUserId || "",
+                    start_offset: 0, // Using text-based matching for rendering
                     end_offset: selectedText.length,
                     text_content: selectedText,
                     color: "yellow",
@@ -648,8 +549,8 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
         }
     };
 
-    const addComment = async () => {
-        if (!newComment.trim()) return;
+    const addComment = async (commentText: string, mentionsMap: Map<string, string>) => {
+        if (!commentText.trim()) return;
 
         try {
             // First create the highlight for the selected text
@@ -665,7 +566,7 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
                     },
                     body: JSON.stringify({
                         article_id: articleId,
-                        user_id: "492acb7a-2cce-47d7-86d4-b2df4b1ddc69",
+                        user_id: currentUserId || "",
                         start_offset: 0, // TODO: Calculate actual offset
                         end_offset: selectedText.length,
                         text_content: selectedText,
@@ -677,14 +578,9 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
             }
 
             // Extract mentioned user IDs from the mentions map
-            // Get the actual text from contentEditable div (which has the mentions)
-            const commentText = commentInputRef.current?.textContent || newComment;
-            
-            // Use ref to get the latest mentions map
-            const currentMentions = commentMentionsRef.current;
+            const currentMentions = mentionsMap;
             
             console.log('Extracting mentions:', {
-                newComment,
                 commentText,
                 commentMentions: Array.from(currentMentions.entries()),
                 commentMentionsSize: currentMentions.size
@@ -720,7 +616,7 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
             const commentPayload = {
                 article_id: articleId,
                 body: commentText, // Use commentText from contentEditable, not newComment
-                author_id: "492acb7a-2cce-47d7-86d4-b2df4b1ddc69",
+                author_id: currentUserId || "",
                 highlight_id: highlightId,
                 mentioned_users: mentionedUserIds.length > 0 ? mentionedUserIds : null,
             };
@@ -741,20 +637,69 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
             const createdComment = await commentResponse.json();
             console.log('Created comment response:', createdComment);
 
-            setNewComment("");
-            setCommentMentions(new Map());
             setSelectedText("");
             setShowToolbar(false);
             setShowSidebar(true);
-            if (commentInputRef.current) {
-                commentInputRef.current.textContent = "";
-            }
             fetchComments();
             fetchHighlights();
         } catch (error) {
             console.error("Error adding comment:", error);
         }
     };
+
+    const addReply = async (parentId: string, replyBody: string) => {
+        if (!replyBody.trim()) return;
+
+        try {
+            // Fake backend call - in real implementation, this would POST to the API
+            console.log('Adding reply:', { parentId, replyBody, author_id: currentUserId });
+            
+            // Simulate API call
+            const fakeReply: Comment = {
+                id: `reply-${Date.now()}`,
+                body: replyBody,
+                created_at: new Date().toISOString(),
+                author_id: currentUserId || '',
+                author_name: user?.email?.split('@')[0] || 'You',
+                mentioned_users: [],
+                parent_id: parentId,
+                replies: [],
+            };
+
+            // Update comments state by adding the reply to the appropriate parent
+            setComments(prevComments => {
+                const addReplyToComment = (comments: Comment[]): Comment[] => {
+                    return comments.map(comment => {
+                        if (comment.id === parentId) {
+                            return {
+                                ...comment,
+                                replies: [...(comment.replies || []), fakeReply]
+                            };
+                        }
+                        if (comment.replies && comment.replies.length > 0) {
+                            return {
+                                ...comment,
+                                replies: addReplyToComment(comment.replies)
+                            };
+                        }
+                        return comment;
+                    });
+                };
+                return addReplyToComment(prevComments);
+            });
+
+            // Clear reply input
+            setReplyText(prev => {
+                const newMap = new Map(prev);
+                newMap.delete(parentId);
+                return newMap;
+            });
+            setReplyingToId(null);
+        } catch (error) {
+            console.error("Error adding reply:", error);
+        }
+    };
+
 
     if (loading) {
         return (
@@ -774,372 +719,191 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
 
     return (
         <div className="h-full flex flex-col bg-background">
-            {/* Minimal Header */}
-            <div className="border-b px-6 py-3 flex items-center justify-between">
-                <button
-                    onClick={() => setShowSidebar(!showSidebar)}
-                    className="text-sm text-muted-foreground hover:text-foreground"
-                >
-                    💬 Comments ({comments.length})
-                </button>
-                <button
-                    onClick={() => router.back()}
-                    className="text-muted-foreground hover:text-foreground text-sm"
-                >
-                    ✕ Close
-                </button>
-            </div>
-
             {/* Main Content - Full Screen */}
             <div className="flex-1 flex overflow-hidden">
                 {/* Article Content - Centered like Notion */}
                 <div className="flex-1 overflow-y-auto">
                     <div className="max-w-[750px] mx-auto px-12 py-12">
-                        <h1 className="text-4xl font-bold mb-3">{article.title}</h1>
-                        {article.url && (
-                            <a
-                                href={article.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-sm text-blue-500 hover:underline mb-6 block"
-                            >
-                                View Original →
-                            </a>
-                        )}
-                        
-                        {/* Business Insights - Why This Matters for Omen */}
-                        {article.why_it_matters && (
-                            <div className="mb-8 p-6 bg-blue-50 dark:bg-blue-950/20 rounded-lg border border-blue-200 dark:border-blue-900">
-                                <h2 className="text-xl font-semibold mb-3">Why This Matters for Omen</h2>
-                                <p className="text-base leading-relaxed">{article.why_it_matters}</p>
+                        <button
+                            onClick={() => router.push('/graph')}
+                            className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-6 transition-colors"
+                        >
+                            <ArrowLeft className="w-4 h-4" />
+                            Back to Graph
+                        </button>
+                        <h1 className="text-4xl font-bold mb-2">{article.title}</h1>
+
+                        {/* Author Info */}
+                        <div className="flex items-center gap-3 mb-8 text-sm text-muted-foreground">
+                            <div className="flex items-center gap-2">
+                                <span>Added by</span>
+                                <Avatar className="h-6 w-6">
+                                    <AvatarImage src={`https://avatar.vercel.sh/${article.author || 'Unknown'}`} />
+                                    <AvatarFallback>{(article.author || 'U')[0]}</AvatarFallback>
+                                </Avatar>
+                                <span className="font-medium text-foreground">{article.author || 'Unknown Author'}</span>
                             </div>
-                        )}
-                        
-                        {/* Business Summary - Relevant Insights */}
-                        {article.business_summary && (
-                            <div className="mb-8 p-6 bg-muted/50 rounded-lg border">
-                                <h2 className="text-xl font-semibold mb-3">Relevant Insights</h2>
-                                <div className="prose prose-lg dark:prose-invert max-w-none">
-                                    <p className="whitespace-pre-wrap leading-relaxed">{article.business_summary}</p>
-                                </div>
-                            </div>
-                        )}
-                        
-                        {/* Full Article Content */}
-                        <div className="mt-6 pt-6 border-t">
-                            <article className="prose prose-lg dark:prose-invert max-w-none">
-                                <h2 className="text-4xl font-semibold mb-6">Full Article</h2>
-                                <EditorContent editor={editor} />
-                            </article>
+                            <span>•</span>
+                            <span>{new Date(article.created_at || Date.now()).toLocaleDateString(undefined, { 
+                                year: 'numeric', 
+                                month: 'long', 
+                                day: 'numeric' 
+                            })}</span>
+                            {article.url && (
+                                <>
+                                    <span>•</span>
+                                    <a 
+                                        href={article.url} 
+                                        target="_blank" 
+                                        rel="noopener noreferrer" 
+                                        className="text-blue-500 hover:underline flex items-center gap-1"
+                                    >
+                                        <LinkIcon className="w-3 h-3" />
+                                        Original Source
+                                    </a>
+                                </>
+                            )}
                         </div>
+
+                        <Tabs defaultValue="insights" className="w-full" onValueChange={setActiveTab}>
+                            <TabsList className="w-full justify-start border-b rounded-none h-auto p-0 bg-transparent gap-6 mb-8 relative">
+                                <TabsTrigger 
+                                    value="insights"
+                                    className="rounded-none border-0 bg-transparent px-0 py-2 data-[state=active]:text-foreground text-muted-foreground hover:text-foreground transition-colors relative z-10 data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+                                >
+                                    <Sparkles className="w-4 h-4 mr-1" />
+                                    Insights
+                                    {activeTab === "insights" && (
+                                        <motion.div
+                                            layoutId="activeTab"
+                                            className="absolute bottom-0 left-0 right-0 h-[2px] bg-primary"
+                                            initial={false}
+                                            transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                                        />
+                                    )}
+                                </TabsTrigger>
+                                <TabsTrigger 
+                                    value="full-article"
+                                    className="rounded-none border-0 bg-transparent px-0 py-2 data-[state=active]:text-foreground text-muted-foreground hover:text-foreground transition-colors relative z-10 data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+                                >
+                                    <FileText className="w-4 h-4 mr-1" />
+                                    Full Article
+                                    {activeTab === "full-article" && (
+                                        <motion.div
+                                            layoutId="activeTab"
+                                            className="absolute bottom-0 left-0 right-0 h-[2px] bg-primary"
+                                            initial={false}
+                                            transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                                        />
+                                    )}
+                                </TabsTrigger>
+                            </TabsList>
+
+                            <div className="min-h-[500px]">
+                                <TabsContent value="insights" className="mt-0 focus-visible:ring-0">
+                                    <motion.div 
+                                        initial={{ opacity: 0, y: 10 }} 
+                                        animate={{ opacity: 1, y: 0 }} 
+                                        transition={{ duration: 0.4 }}
+                                    >
+                                        {/* Business Insights - Why This Matters for Omen */}
+                                        {article.why_it_matters ? (
+                                            <div className="mb-12">
+                                                <div className="flex items-center gap-2 mb-4">
+                                                    <div className="h-5 flex items-center">
+                                                        <div className="w-1 h-5 bg-indigo-500/20 rounded-full" />
+                                                    </div>
+                                                    <h2 className="text-2xl font-medium">
+                                                        Why This Matters to Omen
+                                                    </h2>
+                                                </div>
+                                                <p className="text-lg leading-relaxed text-foreground/90 font-light">{article.why_it_matters}</p>
+                                            </div>
+                                        ) : null}
+                                        
+                                        {/* Business Summary - Relevant Insights */}
+                                        {article.business_summary ? (
+                                            <div className="mb-12">
+                                                <div className="flex items-center gap-2 mb-4">
+                                                    <div className="h-5 flex items-center">
+                                                        <div className="w-1 h-5 bg-indigo-500/20 rounded-full" />
+                                                    </div>
+                                                    <h2 className="text-2xl font-medium">
+                                                        Key Insights for You
+                                                    </h2>
+                                                </div>
+                                                <div className="prose prose-lg max-w-none">
+                                                    <p className="whitespace-pre-wrap leading-relaxed text-foreground/90 font-light">{article.business_summary}</p>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            !article.why_it_matters && (
+                                                <div className="text-center py-12 text-muted-foreground font-light">
+                                                    No insights generated yet.
+                                                </div>
+                                            )
+                                        )}
+                                    </motion.div>
+                                </TabsContent>
+
+                                <TabsContent value="full-article" className="mt-0 focus-visible:ring-0">
+                                    <motion.div 
+                                        initial={{ opacity: 0, y: 10 }} 
+                                        animate={{ opacity: 1, y: 0 }} 
+                                        transition={{ duration: 0.4 }}
+                                    >
+                                        <article className="prose prose-lg max-w-none">
+                                            <EditorContent editor={editor} />
+                                        </article>
+                                    </motion.div>
+                                </TabsContent>
+                            </div>
+                        </Tabs>
                     </div>
                 </div>
 
-                {/* Comment Sidebar - Hidden by default */}
+                {/* Comment Sidebar */}
                 {showSidebar && (
-                    <div className="w-80 border-l bg-muted/5 flex flex-col">
-                        <div className="p-4 border-b">
-                            <h2 className="font-semibold">Comments</h2>
-                        </div>
-
-                        {/* Comments List */}
-                        <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                            {comments.length === 0 ? (
-                                <p className="text-sm text-muted-foreground text-center py-8">
-                                    No comments yet
-                                </p>
-                            ) : (
-                                comments.map((comment) => {
-                                    const highlight = highlights.find(h => h.id === comment.highlight_id);
-                                    return (
-                                        <div key={comment.id} id={`comment-${comment.id}`} className="bg-background rounded-lg p-3 border">
-                                            <div className="flex items-center gap-2 mb-2">
-                                                <span className="text-xs font-semibold text-muted-foreground">
-                                                    {comment.author_name || 'Unknown'}
-                                                </span>
-                                                <span className="text-xs text-muted-foreground">
-                                                    {new Date(comment.created_at).toLocaleDateString()}
-                                                </span>
-                                            </div>
-                                            {highlight && (
-                                                <div className="mb-2 p-2 bg-yellow-50 dark:bg-yellow-900/20 rounded text-sm italic border-l-2 border-yellow-400">
-                                                    "{highlight.text_content}"
-                                                </div>
-                                            )}
-                                            <p className="text-sm whitespace-pre-wrap">
-                                                {(() => {
-                                                    // Parse mentions from comment body
-                                                    const body = comment.body;
-                                                    const mentionedUserIds = comment.mentioned_users || [];
-                                                    
-                                                    // Debug logging - always log to see what's happening
-                                                    console.log('Rendering comment:', {
-                                                        commentId: comment.id,
-                                                        body,
-                                                        mentionedUserIds,
-                                                        mentionedUserIdsLength: mentionedUserIds.length,
-                                                        teamMembersCount: teamMembers.length,
-                                                        teamMembers: teamMembers
-                                                    });
-                                                    
-                                                    // If no mentioned users, just return the body as plain text
-                                                    if (mentionedUserIds.length === 0) {
-                                                        console.log('No mentioned users, returning plain text');
-                                                        return body;
-                                                    }
-                                                    
-                                                    if (teamMembers.length === 0) {
-                                                        console.log('No team members loaded yet, returning plain text');
-                                                        return body;
-                                                    }
-                                                    
-                                                    // Create a map of user IDs to names from team members
-                                                    const userIdToName = new Map<string, string>();
-                                                    teamMembers.forEach(member => {
-                                                        userIdToName.set(member.id, member.full_name || 'Unknown');
-                                                    });
-                                                    
-                                                    // Create a set of mention names that should be highlighted
-                                                    const mentionNamesToHighlight = new Set<string>();
-                                                    mentionedUserIds.forEach(userId => {
-                                                        const userName = userIdToName.get(userId);
-                                                        if (userName) {
-                                                            mentionNamesToHighlight.add(`@${userName}`);
-                                                        }
-                                                    });
-                                                    
-                                                    console.log('Mention names to highlight:', Array.from(mentionNamesToHighlight));
-                                                    
-                                                    // Find all @mentions in the text
-                                                    const mentionRegex = /@(\w+(?:\s+\w+)*)/g;
-                                                    const parts: Array<{ text: string; isMention: boolean }> = [];
-                                                    let lastIndex = 0;
-                                                    let match;
-                                                    
-                                                    while ((match = mentionRegex.exec(body)) !== null) {
-                                                        // Add text before mention
-                                                        if (match.index > lastIndex) {
-                                                            parts.push({ text: body.substring(lastIndex, match.index), isMention: false });
-                                                        }
-                                                        
-                                                        const mentionText = match[0]; // @Name
-                                                        
-                                                        // Check if this mention should be highlighted
-                                                        const shouldHighlight = mentionNamesToHighlight.has(mentionText);
-                                                        
-                                                        console.log('Found mention:', mentionText, 'should highlight:', shouldHighlight);
-                                                        
-                                                        parts.push({ 
-                                                            text: mentionText, 
-                                                            isMention: shouldHighlight 
-                                                        });
-                                                        
-                                                        lastIndex = match.index + mentionText.length;
-                                                    }
-                                                    
-                                                    // Add remaining text
-                                                    if (lastIndex < body.length) {
-                                                        parts.push({ text: body.substring(lastIndex), isMention: false });
-                                                    }
-                                                    
-                                                    // If no parts were created, return body as-is
-                                                    if (parts.length === 0) {
-                                                        return body;
-                                                    }
-                                                    
-                                                    return parts.map((part, idx) => {
-                                                        if (part.isMention) {
-                                                            return (
-                                                                <span key={idx} className="font-medium text-blue-600 dark:text-blue-400">
-                                                                    {part.text}
-                                                                </span>
-                                                            );
-                                                        }
-                                                        return <span key={idx}>{part.text}</span>;
-                                                    });
-                                                })()}
-                                            </p>
-                                        </div>
-                                    );
-                                })
-                            )}
-                        </div>
-
-                        {/* Add Comment */}
-                        <div className="p-4 border-t relative">
-                            {selectedText && (
-                                <div className="mb-2 p-2 bg-yellow-50 dark:bg-yellow-900/20 rounded text-xs italic border-l-2 border-yellow-400">
-                                    Commenting on: "{selectedText.substring(0, 100)}{selectedText.length > 100 ? '...' : ''}"
-                                </div>
-                            )}
-                            <div className="relative">
-                                <div
-                                    ref={commentInputRef}
-                                    contentEditable
-                                    onInput={(e) => {
-                                        const div = e.currentTarget;
-                                        const text = div.textContent || '';
-                                        const selection = window.getSelection();
-                                        let cursorPos = text.length;
-                                        
-                                        try {
-                                            if (selection && selection.rangeCount > 0) {
-                                                const range = selection.getRangeAt(0);
-                                                cursorPos = getCaretPosition(div, range);
-                                            }
-                                        } catch (err) {
-                                            // Fallback to end of text
-                                        }
-                                        
-                                        setNewComment(text);
-                                        
-                                        // Check for @ mention trigger
-                                        const textBeforeCursor = text.substring(0, cursorPos);
-                                        const lastAtIndex = textBeforeCursor.lastIndexOf('@');
-                                        
-                                        if (lastAtIndex !== -1) {
-                                            const textAfterAt = textBeforeCursor.substring(lastAtIndex + 1);
-                                            // Check if we're still typing the mention (no space or newline after @)
-                                            if (!textAfterAt.match(/[\s\n]/)) {
-                                                const query = textAfterAt.toLowerCase();
-                                                setMentionQuery(query);
-                                                setMentionPosition({ start: lastAtIndex, end: cursorPos });
-                                                setShowMentionSuggestions(true);
-                                            } else {
-                                                setShowMentionSuggestions(false);
-                                            }
-                                        } else {
-                                            setShowMentionSuggestions(false);
-                                        }
-                                        
-                                        // Update mention highlights after a short delay to avoid conflicts
-                                        // Only update if we're not currently typing a mention (to avoid flickering)
-                                        if (!showMentionSuggestions) {
-                                            // Use requestAnimationFrame for smoother updates
-                                            requestAnimationFrame(() => {
-                                                setCommentMentions(currentMentions => {
-                                                    updateMentionHighlightsWithMap(div, currentMentions);
-                                                    return currentMentions;
-                                                });
-                                            });
-                                        }
-                                    }}
-                                    onKeyDown={(e) => {
-                                        if (showMentionSuggestions && e.key === 'Enter') {
-                                            e.preventDefault();
-                                            // Select first suggestion on Enter
-                                            const firstSuggestion = document.querySelector('[data-mention-suggestion]') as HTMLElement;
-                                            if (firstSuggestion) {
-                                                firstSuggestion.click();
-                                            }
-                                        }
-                                    }}
-                                    data-placeholder="Write your comment... Use @ to mention someone"
-                                    className="w-full p-2 border rounded-md text-sm min-h-[80px] max-h-[200px] overflow-y-auto bg-background focus:outline-none focus:ring-2 focus:ring-primary empty:before:content-[attr(data-placeholder)] empty:before:text-muted-foreground"
-                                    style={{ whiteSpace: 'pre-wrap' }}
-                                />
-                                
-                                {/* Mention Suggestions Dropdown */}
-                                {showMentionSuggestions && teamMembers.length > 0 && (
-                                    <div className="absolute bottom-full left-0 mb-1 w-full bg-background border rounded-md shadow-lg max-h-48 overflow-y-auto z-50">
-                                        {teamMembers
-                                            .filter(member => 
-                                                member.full_name?.toLowerCase().includes(mentionQuery) ||
-                                                member.role?.toLowerCase().includes(mentionQuery)
-                                            )
-                                            .slice(0, 5)
-                                            .map((member, idx) => (
-                                                <button
-                                                    key={member.id}
-                                                    data-mention-suggestion={idx === 0 ? true : undefined}
-                                                    type="button"
-                                                    onClick={() => {
-                                                        if (!commentInputRef.current) return;
-                                                        
-                                                        const textBefore = newComment.substring(0, mentionPosition.start);
-                                                        const textAfter = newComment.substring(mentionPosition.end);
-                                                        const mentionText = `@${member.full_name || 'Unknown'}`;
-                                                        
-                                                        // Update the text first
-                                                        const newText = textBefore + mentionText + ' ' + textAfter;
-                                                        setNewComment(newText);
-                                                        
-                                                        // Store the mapping - use functional update to ensure we have latest state
-                                                        setCommentMentions(prev => {
-                                                            const newMap = new Map(prev);
-                                                            newMap.set(mentionText, member.id);
-                                                            return newMap;
-                                                        });
-                                                        
-                                                        // Update the contentEditable div with plain text first
-                                                        commentInputRef.current.textContent = newText;
-                                                        
-                                                        // Move cursor after the mention
-                                                        const newCursorPos = mentionPosition.start + mentionText.length + 1;
-                                                        setCaretPosition(commentInputRef.current, newCursorPos);
-                                                        
-                                                        // Then apply highlights after state update
-                                                        setTimeout(() => {
-                                                            // Re-read the mentions map from state
-                                                            setCommentMentions(currentMentions => {
-                                                                updateMentionHighlightsWithMap(commentInputRef.current!, currentMentions);
-                                                                return currentMentions;
-                                                            });
-                                                        }, 10);
-                                                        
-                                                        setShowMentionSuggestions(false);
-                                                        setMentionQuery("");
-                                                    }}
-                                                    className="w-full text-left px-3 py-2 hover:bg-muted flex items-center gap-2"
-                                                >
-                                                    <span className="font-medium">{member.full_name || 'Unknown'}</span>
-                                                    {member.role && (
-                                                        <span className="text-xs text-muted-foreground">({member.role})</span>
-                                                    )}
-                                                </button>
-                                            ))}
-                                    </div>
-                                )}
-                            </div>
-                            
-                            <button
-                                onClick={addComment}
-                                disabled={!newComment.trim()}
-                                className="mt-2 w-full bg-primary text-primary-foreground rounded-md py-2 text-sm font-medium disabled:opacity-50"
-                            >
-                                Add Comment
-                            </button>
-                        </div>
-                    </div>
+                    <CommentSidebar
+                        ref={commentSidebarRef}
+                        comments={comments}
+                        highlights={highlights}
+                        selectedCommentId={selectedCommentId}
+                        currentUserId={currentUserId}
+                        teamMembers={teamMembers}
+                        activeTab={activeTab}
+                        selectedText={selectedText}
+                        replyingToId={replyingToId}
+                        replyText={replyText}
+                        onReplyClick={(id) => setReplyingToId(id === replyingToId ? null : id)}
+                        onReplyTextChange={(id, text) => {
+                            setReplyText(prev => {
+                                const newMap = new Map(prev);
+                                newMap.set(id, text);
+                                return newMap;
+                            });
+                        }}
+                        onAddReply={addReply}
+                        onAddComment={addComment}
+                        cursorTooltip={cursorTooltip}
+                        onCursorTooltipChange={setCursorTooltip}
+                    />
                 )}
             </div>
 
             {/* Floating Toolbar on Text Selection */}
-            {showToolbar && (
-                <div
-                    className="fixed bg-background border rounded-lg shadow-lg p-2 flex gap-2 z-50"
-                    style={{
-                        left: `${toolbarPosition.x}px`,
-                        top: `${toolbarPosition.y}px`,
-                        transform: "translateX(-50%)",
-                    }}
-                >
-                    <button
-                        onClick={() => {
-                            setShowSidebar(true);
-                            setShowToolbar(false);
-                            // Focus on comment input
-                            setTimeout(() => {
-                                const textarea = document.querySelector('textarea');
-                                textarea?.focus();
-                            }, 100);
-                        }}
-                        className="px-3 py-1 text-sm hover:bg-muted rounded"
-                    >
-                        💬 Add Comment
-                    </button>
-                </div>
-            )}
+            <HighlightToolbar
+                show={showToolbar}
+                position={toolbarPosition}
+                onAddComment={() => {
+                    setShowSidebar(true);
+                    setShowToolbar(false);
+                    // Focus the comment input after a short delay to ensure sidebar is rendered
+                    setTimeout(() => {
+                        commentSidebarRef.current?.focusInput();
+                    }, 100);
+                }}
+            />
         </div>
     );
 }
