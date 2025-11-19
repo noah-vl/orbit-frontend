@@ -144,7 +144,6 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef>((props, ref) => {
   const [highlightNodes, setHighlightNodes] = useState(new Set());
   const [highlightLinks, setHighlightLinks] = useState(new Set());
   const [hoverNode, setHoverNode] = useState<any>(null);
-  const [selectedArticle, setSelectedArticle] = useState<any>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<any>(null);
@@ -167,22 +166,11 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef>((props, ref) => {
     }
   }));
 
-  const handleNodeClick = async (node: any) => {
+  const handleNodeClick = (node: any) => {
     // Only handle clicks on articles (Group 2)
-    if (node.group === 2) {
-      // Fetch full article details
-      try {
-        const response = await fetch('https://xltqabrlmfalosewvjby.supabase.co/functions/v1/get_graph', {
-          method: 'POST',
-        });
-        const graphData = await response.json();
-
-        // Find the article in the data (we'll need to enhance the API to return full article data)
-        // For now, just show the node data
-        setSelectedArticle(node);
-      } catch (error) {
-        console.error('Error fetching article details:', error);
-      }
+    if (node.group === 2 && node.articleId) {
+      // Navigate to article detail page
+      window.location.href = `/article/${node.articleId}`;
     }
   };
 
@@ -410,62 +398,6 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef>((props, ref) => {
         onNodeHover={handleNodeHover}
         onNodeClick={handleNodeClick}
       />
-
-      {/* Article Detail Modal */}
-      {selectedArticle && (
-        <div
-          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
-          onClick={() => setSelectedArticle(null)}
-        >
-          <div
-            className="bg-background border rounded-lg shadow-lg max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="p-6">
-              <div className="flex justify-between items-start mb-4">
-                <h2 className="text-2xl font-bold">{selectedArticle.label}</h2>
-                <button
-                  onClick={() => setSelectedArticle(null)}
-                  className="text-muted-foreground hover:text-foreground text-2xl leading-none"
-                >
-                  ×
-                </button>
-              </div>
-              <div className="space-y-4">
-                {selectedArticle.url && (
-                  <div>
-                    <label className="text-sm font-medium text-muted-foreground">URL</label>
-                    <a
-                      href={selectedArticle.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="block text-sm text-blue-500 hover:underline mt-1"
-                    >
-                      {selectedArticle.url}
-                    </a>
-                  </div>
-                )}
-                {selectedArticle.content && (
-                  <div>
-                    <label className="text-sm font-medium text-muted-foreground">Content Preview</label>
-                    <div className="mt-2 text-sm prose prose-sm max-w-none">
-                      {selectedArticle.content.substring(0, 500)}...
-                    </div>
-                  </div>
-                )}
-                {selectedArticle.created_at && (
-                  <div>
-                    <label className="text-sm font-medium text-muted-foreground">Added</label>
-                    <p className="text-sm mt-1">
-                      {new Date(selectedArticle.created_at).toLocaleDateString()}
-                    </p>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 });
