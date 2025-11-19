@@ -14,8 +14,8 @@ export default function GraphPage() {
   return (
     <div className="flex flex-col h-full">
       <div className="sticky top-0 z-10 bg-background border-b">
-        <div className="flex items-center justify-between px-6 py-6 md:px-12 md:py-8">
-          <h1 className="text-3xl font-bold tracking-tight">Graph View</h1>
+        <div className="flex items-center justify-between px-6 py-3 md:px-8 md:py-4">
+          <h1 className="text-2xl font-bold tracking-tight">Graph View</h1>
           <div className="flex items-center gap-4">
             <div className="flex items-center space-x-2 mr-2">
               <Switch id="mock-data" checked={showMockData} onCheckedChange={setShowMockData} />
