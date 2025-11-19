@@ -27,15 +27,15 @@ interface QuestionsStepProps extends HTMLMotionProps<"div"> {
 }
 
 const RESPONSIBILITIES = [
-  "Setting direction / strategy",
-  "Shipping product features",
-  "User research & discovery",
-  "Running experiments",
-  "Hitting growth targets",
-  "Closing deals / managing accounts",
-  "Keeping systems reliable",
-  "Making sense of data / reporting",
-  "Hiring & org design"
+  "Setting strategy & vision",
+  "Driving execution & delivery",
+  "Managing people & teams",
+  "Optimizing operations & processes",
+  "Analyzing data & trends",
+  "Managing stakeholder relationships",
+  "Ensuring quality & reliability",
+  "Research & innovation",
+  "Resource & budget management"
 ]
 
 const DECISION_INVOLVEMENT = [
@@ -44,18 +44,10 @@ const DECISION_INVOLVEMENT = [
   { value: "curator", label: "I manage and structure the team's knowledge base" }
 ]
 
-const UPDATE_TYPES = [
-  "Engineering: Tech dependencies & architecture",
-  "Product: User value & roadmap impact",
-  "Leadership: Strategy, risks & outcomes",
-  "Market: Competitor analysis & trends",
-  "Research: Key findings & academic papers"
-]
 
 export function QuestionsStep({ onNext, onBack, className, ...props }: QuestionsStepProps) {
   const [responsibilities, setResponsibilities] = useState<string[]>([])
   const [decisionInvolvement, setDecisionInvolvement] = useState("")
-  const [updateTypes, setUpdateTypes] = useState<string[]>([])
 
   const toggleResponsibility = (responsibility: string) => {
     setResponsibilities(prev => 
@@ -65,25 +57,14 @@ export function QuestionsStep({ onNext, onBack, className, ...props }: Questions
     )
   }
 
-  const toggleUpdateType = (type: string) => {
-    setUpdateTypes(prev => 
-      prev.includes(type)
-        ? prev.filter(t => t !== type)
-        : [...prev, type]
-    )
-  }
-
   return (
     <motion.div
       className={cn("w-full max-w-2xl my-auto", className)}
       {...props}
     >
       <div className="flex flex-col space-y-8 text-left">
-        <div className="space-y-2 text-center mb-4">
+        <div className="space-y-2 text-center mb-8">
           <h2 className="text-3xl font-medium text-white">A few more questions</h2>
-          <p className="text-white/70 text-lg">
-            Help us customize your experience
-          </p>
         </div>
 
         <div className="space-y-8">
@@ -113,39 +94,24 @@ export function QuestionsStep({ onNext, onBack, className, ...props }: Questions
             <Label className="text-white/90 text-base">What is your role in knowledge management?</Label>
             <RadioGroup value={decisionInvolvement} onValueChange={setDecisionInvolvement} className="grid gap-3">
               {DECISION_INVOLVEMENT.map((option) => (
-                <div key={option.value} className="flex items-center space-x-2">
+                <div 
+                  key={option.value} 
+                  className="flex items-center space-x-3 p-3 rounded-lg border border-white/10 hover:bg-white/5 transition-colors cursor-pointer" 
+                  onClick={() => setDecisionInvolvement(option.value)}
+                >
                   <RadioGroupItem 
                     value={option.value} 
                     id={option.value} 
-                    className="border-white/20 text-white data-[state=checked]:border-white data-[state=checked]:text-white" 
+                    className="border-white/20 text-white data-[state=checked]:border-white data-[state=checked]:text-white mt-0.5" 
                   />
-                  <Label htmlFor={option.value} className="text-white/80 font-normal cursor-pointer hover:text-white transition-colors">
+                  <div className="flex-1">
+                    <Label htmlFor={option.value} className="text-white/90 font-medium cursor-pointer block mb-0.5">
                     {option.label}
                   </Label>
+                  </div>
                 </div>
               ))}
             </RadioGroup>
-          </div>
-
-          {/* Q4: Update Types (Multi-select Chips) */}
-          <div className="space-y-3">
-            <Label className="text-white/90 text-base">Which perspectives matter most to you?</Label>
-            <div className="flex flex-wrap gap-2">
-              {UPDATE_TYPES.map((type) => (
-                <button
-                  key={type}
-                  onClick={() => toggleUpdateType(type)}
-                  className={cn(
-                    "px-4 py-2 rounded-full text-sm font-medium transition-all duration-200 border",
-                    updateTypes.includes(type)
-                      ? "bg-white text-black border-white shadow-[0_0_15px_rgba(255,255,255,0.3)]"
-                      : "bg-white/5 text-white/70 border-white/10 hover:bg-white/10 hover:text-white hover:border-white/20"
-                  )}
-                >
-                  {type}
-                </button>
-              ))}
-            </div>
           </div>
         </div>
 

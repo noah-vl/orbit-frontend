@@ -117,7 +117,7 @@ export default function ProfilePage() {
                 <CardContent>
                   <p className="text-muted-foreground leading-relaxed">
                     Senior Product Designer with a passion for building accessible and inclusive digital experiences. 
-                    Currently leading the design system team at Solon. Previously worked at TechFlow and DesignCo.
+                    Currently leading the design system team at Orbit. Previously worked at TechFlow and DesignCo.
                     Obsessed with typography, micro-interactions, and clean code.
                   </p>
                 </CardContent>
