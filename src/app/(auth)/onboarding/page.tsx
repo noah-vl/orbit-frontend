@@ -7,6 +7,8 @@ import { motion, AnimatePresence } from "framer-motion"
 import { WelcomeScreen } from "@/components/features/onboarding/welcome-screen"
 import { UserInfoStep } from "@/components/features/onboarding/user-info-step"
 import { QuestionsStep } from "@/components/features/onboarding/questions-step"
+import { InterestsStep } from "@/components/features/onboarding/interests-step"
+import { FinalStep } from "@/components/features/onboarding/final-step"
 import { cn } from "@/lib/utils"
 
 const SUPABASE_URL = "https://xltqabrlmfalosewvjby.supabase.co"
@@ -273,7 +275,7 @@ function OnboardingContent() {
 
   const slideVariants = {
     enter: (direction: number) => ({
-      x: direction > 0 ? "100%" : "-100%",
+      x: direction === 0 ? 0 : (direction > 0 ? "100%" : "-100%"),
       opacity: 0,
       scale: 0.95,
       filter: "blur(10px)"
@@ -292,6 +294,12 @@ function OnboardingContent() {
       scale: 0.95,
       filter: "blur(10px)"
     })
+  }
+
+  const handleStepClick = (step: number) => {
+    if (step === currentStep) return
+    setDirection(step > currentStep ? 1 : -1)
+    setCurrentStep(step)
   }
 
   return (
@@ -368,7 +376,12 @@ function OnboardingContent() {
               key="welcome"
             />
           ) : (
-            <div className="flex flex-col flex-1 w-full h-full">
+            <motion.div 
+              className="flex flex-col flex-1 w-full h-full"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.5 }}
+            >
               <div className="flex-1 flex flex-col items-center justify-center w-full max-w-5xl mx-auto overflow-hidden relative">
                 <AnimatePresence mode="popLayout" custom={direction} initial={false}>
                   {currentStep === 1 && (
@@ -402,6 +415,37 @@ function OnboardingContent() {
                       onBack={handleBack}
                     />
                   )}
+                  {currentStep === 3 && (
+                    <InterestsStep
+                      key="step3"
+                      custom={direction}
+                      variants={slideVariants}
+                      initial="enter"
+                      animate="center"
+                      exit="exit"
+                      transition={{
+                        x: { type: "spring", stiffness: 200, damping: 30 },
+                        opacity: { duration: 0.3 }
+                      }}
+                      onNext={handleNext}
+                      onBack={handleBack}
+                    />
+                  )}
+                  {currentStep === 4 && (
+                    <FinalStep
+                      key="step4"
+                      custom={direction}
+                      variants={slideVariants}
+                      initial="enter"
+                      animate="center"
+                      exit="exit"
+                      transition={{
+                        x: { type: "spring", stiffness: 200, damping: 30 },
+                        opacity: { duration: 0.3 }
+                      }}
+                      onBack={handleBack}
+                    />
+                  )}
                 </AnimatePresence>
               </div>
               
@@ -413,14 +457,16 @@ function OnboardingContent() {
                 transition={{ delay: 0.5, duration: 0.5 }}
               >
                 {Array.from({ length: totalSteps }).map((_, i) => (
-                  <div
+                  <button
                     key={i}
+                    onClick={() => handleStepClick(i + 1)}
                     className={cn(
                       "h-2.5 rounded-full transition-all duration-300 ease-out",
                       currentStep === i + 1 
-                        ? "w-8 bg-white" 
-                        : "w-2.5 bg-white/20 hover:bg-white/40"
+                        ? "w-8 bg-white cursor-default" 
+                        : "w-2.5 bg-white/20 hover:bg-white/40 cursor-pointer"
                     )}
+                    aria-label={`Go to step ${i + 1}`}
                   />
                 ))}
               </motion.div>
@@ -435,7 +481,7 @@ function OnboardingContent() {
                   Creating your account...
                 </motion.div>
               )}
-            </div>
+            </motion.div>
           )}
         </AnimatePresence>
       </div>
