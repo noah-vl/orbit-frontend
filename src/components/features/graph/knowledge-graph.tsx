@@ -2,6 +2,20 @@
 
 import { useEffect, useState, useRef, forwardRef, useImperativeHandle } from "react";
 import dynamic from "next/dynamic";
+import { GraphChat } from "@/components/features/graph/graph-chat";
+import { GraphFilter } from "@/components/features/graph/graph-filter";
+import { generateData } from "@/components/features/graph/mock-data";
+import { Eye, EyeOff, Tag, User } from "lucide-react";
+
+// Helper for deterministic random values based on string seed
+const getStableRandom = (seed: string) => {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = ((hash << 5) - hash) + seed.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash) / 2147483647;
+};
 
 // Dynamically import ForceGraph2D with no SSR
 const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), {
@@ -15,108 +29,7 @@ export interface KnowledgeGraphRef {
   reset: () => void;
 }
 
-// Mock Data
-const generateData = () => {
-  const nodes = [
-    // Main Nodes (5)
-    { id: "Marketing", group: 0, val: 25 },
-    { id: "Sales", group: 0, val: 25 },
-    { id: "Tech", group: 0, val: 25 },
-    { id: "Product", group: 0, val: 25 },
-    { id: "Finance", group: 0, val: 25 },
-
-    // Marketing Subtopics & Articles
-    { id: "SEO", group: 1, val: 10 },
-    { id: "Social Media", group: 1, val: 10 },
-    { id: "Content Strategy", group: 1, val: 10 },
-    { id: "Ranking on Google", group: 2, val: 5 },
-    { id: "Instagram Growth", group: 2, val: 5 },
-    { id: "Viral Content", group: 2, val: 5 },
-
-    // Sales Subtopics & Articles
-    { id: "Outreach", group: 1, val: 10 },
-    { id: "Closing", group: 1, val: 10 },
-    { id: "CRM", group: 1, val: 10 },
-    { id: "Cold Emailing 101", group: 2, val: 5 },
-    { id: "Negotiation Tactics", group: 2, val: 5 },
-    { id: "HubSpot vs Salesforce", group: 2, val: 5 },
-
-    // Tech Subtopics & Articles
-    { id: "Frontend", group: 1, val: 10 },
-    { id: "Backend", group: 1, val: 10 },
-    { id: "AI / ML", group: 1, val: 10 },
-    { id: "React 19 Features", group: 2, val: 5 },
-    { id: "Scalable APIs", group: 2, val: 5 },
-    { id: "LLMs in Production", group: 2, val: 5 },
-
-    // Product Subtopics & Articles
-    { id: "Roadmap", group: 1, val: 10 },
-    { id: "UX Design", group: 1, val: 10 },
-    { id: "User Research", group: 1, val: 10 },
-    { id: "Q4 Goals", group: 2, val: 5 },
-    { id: "Accessibility Standards", group: 2, val: 5 },
-    { id: "User Interviews", group: 2, val: 5 },
-
-    // Finance Subtopics & Articles
-    { id: "Budgeting", group: 1, val: 10 },
-    { id: "Investments", group: 1, val: 10 },
-    { id: "Payroll", group: 1, val: 10 },
-    { id: "2025 Forecast", group: 2, val: 5 },
-    { id: "Seed Funding", group: 2, val: 5 },
-    { id: "Tax Compliance", group: 2, val: 5 },
-  ];
-
-  const links = [
-    // Ring connection for main nodes
-    { source: "Marketing", target: "Sales" },
-    { source: "Sales", target: "Finance" },
-    { source: "Finance", target: "Product" },
-    { source: "Product", target: "Tech" },
-    { source: "Tech", target: "Marketing" },
-
-    // Marketing Links
-    { source: "Marketing", target: "SEO" },
-    { source: "Marketing", target: "Social Media" },
-    { source: "Marketing", target: "Content Strategy" },
-    { source: "SEO", target: "Ranking on Google" },
-    { source: "Social Media", target: "Instagram Growth" },
-    { source: "Content Strategy", target: "Viral Content" },
-
-    // Sales Links
-    { source: "Sales", target: "Outreach" },
-    { source: "Sales", target: "Closing" },
-    { source: "Sales", target: "CRM" },
-    { source: "Outreach", target: "Cold Emailing 101" },
-    { source: "Closing", target: "Negotiation Tactics" },
-    { source: "CRM", target: "HubSpot vs Salesforce" },
-
-    // Tech Links
-    { source: "Tech", target: "Frontend" },
-    { source: "Tech", target: "Backend" },
-    { source: "Tech", target: "AI / ML" },
-    { source: "Frontend", target: "React 19 Features" },
-    { source: "Backend", target: "Scalable APIs" },
-    { source: "AI / ML", target: "LLMs in Production" },
-
-    // Product Links
-    { source: "Product", target: "Roadmap" },
-    { source: "Product", target: "UX Design" },
-    { source: "Product", target: "User Research" },
-    { source: "Roadmap", target: "Q4 Goals" },
-    { source: "UX Design", target: "Accessibility Standards" },
-    { source: "User Research", target: "User Interviews" },
-
-    // Finance Links
-    { source: "Finance", target: "Budgeting" },
-    { source: "Finance", target: "Investments" },
-    { source: "Finance", target: "Payroll" },
-    { source: "Budgeting", target: "2025 Forecast" },
-    { source: "Investments", target: "Seed Funding" },
-    { source: "Payroll", target: "Tax Compliance" },
-  ];
-
-  return { nodes, links };
-};
+// Mock Data is now imported from mock-data.ts
 
 // Fetch real data from Supabase
 const fetchGraphData = async () => {
@@ -138,12 +51,19 @@ const fetchGraphData = async () => {
   }
 };
 
-export const KnowledgeGraph = forwardRef<KnowledgeGraphRef>((props, ref) => {
-  const [data, setData] = useState({ nodes: [], links: [] });
+export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boolean }>(({ showMockData = false }, ref) => {
+  const [data, setData] = useState<{ nodes: any[], links: any[] }>({ nodes: [], links: [] });
+  const [fetchedData, setFetchedData] = useState<{ nodes: any[], links: any[] }>({ nodes: [], links: [] });
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
   const [highlightNodes, setHighlightNodes] = useState(new Set());
   const [highlightLinks, setHighlightLinks] = useState(new Set());
+  const [nodeRelevance, setNodeRelevance] = useState<Map<string, number>>(new Map());
   const [hoverNode, setHoverNode] = useState<any>(null);
+  
+  // Filter states
+  const [statusFilters, setStatusFilters] = useState<Set<string>>(new Set());
+  const [categoryFilters, setCategoryFilters] = useState<Set<string>>(new Set());
+  const [personalFitFilters, setPersonalFitFilters] = useState<Set<string>>(new Set());
 
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<any>(null);
@@ -168,85 +88,25 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef>((props, ref) => {
 
   const handleNodeClick = (node: any) => {
     // Only handle clicks on articles (Group 2)
-    if (node.group === 2 && node.articleId) {
-      // Navigate to article detail page
-      window.location.href = `/article/${node.articleId}`;
+    if (node.group === 2) {
+      // Navigate to article detail page if articleId is available
+      if (node.articleId) {
+        window.location.href = `/article/${node.articleId}`;
+      } else if (node.id) {
+        // Fallback: try using node.id as articleId
+        window.location.href = `/article/${node.id}`;
+      }
     }
   };
 
   useEffect(() => {
-    // Fetch real data instead of using mock data
-    fetchGraphData().then(graphData => {
-      const centerX = dimensions.width / 2;
-      const centerY = dimensions.height / 2;
-
-      // Position Group 0 nodes (base categories) in a fixed circle
-      const baseCategories = graphData.nodes.filter((n: any) => n.group === 0);
-      const baseCategoryRadius = 150;
-
-      baseCategories.forEach((node: any, i: number) => {
-        const angle = (i / baseCategories.length) * 2 * Math.PI;
-        node.fx = centerX + baseCategoryRadius * Math.cos(angle);
-        node.fy = centerY + baseCategoryRadius * Math.sin(angle);
-      });
-
-      // Position Group 1 nodes (subcategories) in arcs around their parent categories
-      const subcategories = graphData.nodes.filter((n: any) => n.group === 1);
-      const subcategoryRadius = 280;
-
-      // Group subcategories by their parent
-      const subcatsByParent = new Map<string, any[]>();
-      graphData.links.forEach((link: any) => {
-        const source = typeof link.source === 'string' ? link.source : link.source.id;
-        const target = typeof link.target === 'string' ? link.target : link.target.id;
-
-        const sourceNode = graphData.nodes.find((n: any) => n.id === source);
-        const targetNode = graphData.nodes.find((n: any) => n.id === target);
-
-        if (sourceNode?.group === 0 && targetNode?.group === 1) {
-          if (!subcatsByParent.has(source)) {
-            subcatsByParent.set(source, []);
-          }
-          subcatsByParent.get(source)!.push(targetNode);
-        }
-      });
-
-      // Position subcategories in arcs around their parent
-      subcatsByParent.forEach((subs, parentId) => {
-        const parent = baseCategories.find((n: any) => n.id === parentId);
-        if (!parent) return;
-
-        const parentAngle = Math.atan2(parent.fy! - centerY, parent.fx! - centerX);
-        const arcSpan = Math.PI / 2; // 90 degree arc
-
-        subs.forEach((sub, i) => {
-          const offset = (i - (subs.length - 1) / 2) * (arcSpan / Math.max(subs.length, 1));
-          const angle = parentAngle + offset;
-          sub.fx = centerX + subcategoryRadius * Math.cos(angle);
-          sub.fy = centerY + subcategoryRadius * Math.sin(angle);
-        });
-      });
-
-      // Position Group 2 nodes (articles) around the outer ring
-      const articles = graphData.nodes.filter((n: any) => n.group === 2);
-      const articleRadius = 400;
-
-      articles.forEach((article: any, i: number) => {
-        const angle = (i / articles.length) * 2 * Math.PI;
-        article.fx = centerX + articleRadius * Math.cos(angle);
-        article.fy = centerY + articleRadius * Math.sin(angle);
-      });
-
-      setData(graphData);
-
-      // Auto-zoom to fit after a short delay
-      setTimeout(() => {
-        if (graphRef.current) {
-          graphRef.current.zoomToFit(400);
-        }
-      }, 500);
+    // Fetch real data once
+    fetchGraphData().then(data => {
+      setFetchedData(data);
     });
+  }, []);
 
+  useEffect(() => {
     const updateDimensions = () => {
       if (containerRef.current) {
         setDimensions({
@@ -258,12 +118,223 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef>((props, ref) => {
 
     window.addEventListener("resize", updateDimensions);
     updateDimensions();
-
-    // Small delay to ensure container is rendered
     setTimeout(updateDimensions, 100);
 
     return () => window.removeEventListener("resize", updateDimensions);
   }, []);
+
+  useEffect(() => {
+    // Combine data and apply layout
+    // We use (0,0) as the center of our world, as d3-force and react-force-graph generally prefer it.
+    // The camera will zoom to fit this content.
+    const centerX = 0;
+    const centerY = 0;
+
+    // Deep copy to avoid mutation issues
+    const currentRealData = JSON.parse(JSON.stringify(fetchedData));
+    let nodes = [...currentRealData.nodes];
+    let links = [...currentRealData.links];
+
+    if (showMockData) {
+      const mockData = generateData();
+      // Filter out mock nodes that might conflict with real nodes (by ID)
+      const realIds = new Set(nodes.map(n => n.id));
+      const newMockNodes = mockData.nodes.filter(n => !realIds.has(n.id));
+      
+      nodes = [...nodes, ...newMockNodes];
+      links = [...links, ...mockData.links];
+    }
+
+    // Apply layout logic
+    // Position Group 0 nodes (base categories) in a fixed circle
+    const baseCategories = nodes.filter((n: any) => n.group === 0);
+    const baseCategoryRadius = 150;
+
+    baseCategories.forEach((node: any, i: number) => {
+      const angle = (i / baseCategories.length) * 2 * Math.PI;
+      node.fx = centerX + baseCategoryRadius * Math.cos(angle);
+      node.fy = centerY + baseCategoryRadius * Math.sin(angle);
+    });
+
+    // Initialize other nodes near the center to prevent them from starting far away
+    nodes.forEach((node: any) => {
+      // Enrich with stable mock properties if missing (for filtering)
+      if (node.group === 2) {
+         if (node.read === undefined) {
+             // Deterministic read status (approx 50% read)
+             node.read = getStableRandom(node.id + "read") > 0.5;
+         }
+         if (!node.fit) {
+             // Deterministic fit
+             const r = getStableRandom(node.id + "fit");
+             node.fit = r > 0.66 ? "high" : (r > 0.33 ? "medium" : "low");
+         }
+      }
+
+      if (node.group !== 0) {
+        node.fx = undefined;
+        node.fy = undefined;
+        // Start them near the center ring so they are picked up by the link force immediately
+        if (!node.x) node.x = centerX + (Math.random() - 0.5) * 50;
+        if (!node.y) node.y = centerY + (Math.random() - 0.5) * 50;
+      }
+    });
+
+    setData({ nodes, links });
+
+    // Auto-zoom to fit after a short delay
+    setTimeout(() => {
+      if (graphRef.current) {
+        graphRef.current.zoomToFit(400);
+      }
+    }, 500);
+
+  }, [fetchedData, showMockData, dimensions]);
+
+  useEffect(() => {
+    if (graphRef.current) {
+      const fg = graphRef.current;
+      
+      // 1. Charge (Repulsion)
+      // Increased strength for more "breathing room" between nodes
+      fg.d3Force('charge').strength(-200).distanceMax(600);
+
+      // 2. Link Force
+      // Relaxed connections to allow more floating movement
+      fg.d3Force('link').distance((link: any) => {
+         const target = link.target;
+         const group = target.group;
+         
+         if (group === 2) return 50;   // Articles: looser connection to subtopic
+         if (group === 1) return 100;  // Subtopics: more space from main topic
+         return 150; 
+      });
+      
+      // 3. Custom Radial Force
+      // Keeps Group 1 and Group 2 nodes in their respective concentric rings
+      // Adjusted strength to be gentler (0.1) so they don't feel rigidly "dragged"
+      const radialForce = (alpha: number) => {
+        const cx = 0;
+        const cy = 0;
+        const strength = 0.1; // Very gentle pull to maintain ring structure loosely
+
+        data.nodes.forEach((node: any) => {
+          if (node.group === 0) return; // fixed nodes ignored
+
+          const dx = node.x - cx || 1e-6;
+          const dy = node.y - cy || 1e-6;
+          const r = Math.sqrt(dx * dx + dy * dy);
+          
+          // Target radii - slightly larger for more space
+          const targetRadius = node.group === 1 ? 320 : 480;
+          
+          // Force magnitude: pull towards radius
+          // Apply alpha to decay force over time (stabilize)
+          const k = (targetRadius - r) * alpha * strength;
+          
+          node.vx += (dx / r) * k;
+          node.vy += (dy / r) * k;
+        });
+      };
+      
+      fg.d3Force('radial', radialForce);
+      
+      // Re-heat simulation
+      fg.d3ReheatSimulation();
+    }
+  }, [data, dimensions]);
+
+  useEffect(() => {
+    const hasStatus = statusFilters.size > 0;
+    const hasFit = personalFitFilters.size > 0;
+    
+    // If no filters active, clear relevance scores (return to default visualization)
+    if (!hasStatus && !hasFit) {
+      setNodeRelevance(new Map());
+      return;
+    }
+
+    const newRelevance = new Map<string, number>();
+
+    // Build Adjacency Map for propagation
+    const adj = new Map<string, Set<string>>();
+    data.links.forEach((link: any) => {
+       const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+       const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+       
+       if (!adj.has(sourceId)) adj.set(sourceId, new Set());
+       if (!adj.has(targetId)) adj.set(targetId, new Set());
+       
+       adj.get(sourceId)!.add(targetId);
+       adj.get(targetId)!.add(sourceId);
+    });
+
+    // Helper to find node by ID
+    const nodeMap = new Map(data.nodes.map((n: any) => [n.id, n]));
+
+    // 1. Score Group 2 (Articles) - The Leaves
+    // Calculate match based on filters
+    data.nodes.forEach((node: any) => {
+      if (node.group !== 2) return;
+
+      let matchesStatus = true;
+      if (hasStatus) {
+        const status = node.read ? "read" : "unread";
+        matchesStatus = statusFilters.has(status);
+      }
+
+      let matchesFit = true;
+      if (hasFit) {
+        matchesFit = personalFitFilters.has(node.fit);
+      }
+
+      // Binary score for leaves: 1 if matches all active filters, 0 otherwise
+      const score = (matchesStatus && matchesFit) ? 1 : 0;
+      newRelevance.set(node.id, score);
+    });
+
+    // 2. Score Group 1 (Subtopics) - Aggregate of connected Articles
+    data.nodes.forEach((node: any) => {
+      if (node.group !== 1) return;
+      
+      const neighbors = Array.from(adj.get(node.id) || []);
+      // Consider only connected Group 2 nodes (children)
+      const children = neighbors.filter(nid => {
+         const n = nodeMap.get(nid);
+         return n && n.group === 2;
+      });
+
+      if (children.length > 0) {
+        const sum = children.reduce((acc, nid) => acc + (newRelevance.get(nid) || 0), 0);
+        newRelevance.set(node.id, sum / children.length);
+      } else {
+        newRelevance.set(node.id, 0);
+      }
+    });
+
+    // 3. Score Group 0 (Departments) - Aggregate of connected Subtopics
+    data.nodes.forEach((node: any) => {
+      if (node.group !== 0) return;
+
+      const neighbors = Array.from(adj.get(node.id) || []);
+      // Consider only connected Group 1 nodes (children)
+      const children = neighbors.filter(nid => {
+         const n = nodeMap.get(nid);
+         return n && n.group === 1;
+      });
+
+      if (children.length > 0) {
+        const sum = children.reduce((acc, nid) => acc + (newRelevance.get(nid) || 0), 0);
+        newRelevance.set(node.id, sum / children.length);
+      } else {
+        newRelevance.set(node.id, 0);
+      }
+    });
+
+    setNodeRelevance(newRelevance);
+    setHighlightNodes(new Set()); // Clear binary highlights if any
+    
+  }, [statusFilters, personalFitFilters, data]);
 
   const handleNodeHover = (node: any) => {
     setHoverNode(node || null);
@@ -306,8 +377,133 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef>((props, ref) => {
     }
   };
 
+  const handleSearch = (query: string) => {
+    const lowerQuery = query.toLowerCase();
+    const matchedNodes = new Set();
+
+    data.nodes.forEach((node: any) => {
+      // Check id/label
+      if (node.id && typeof node.id === 'string' && node.id.toLowerCase().includes(lowerQuery)) {
+        matchedNodes.add(node.id);
+      }
+      // Check content if available
+      if (node.content && typeof node.content === 'string' && node.content.toLowerCase().includes(lowerQuery)) {
+        matchedNodes.add(node.id);
+      }
+    });
+
+    if (matchedNodes.size > 0) {
+      setHighlightNodes(matchedNodes);
+      // Optionally clear highlight links or highlight links between matched nodes?
+      setHighlightLinks(new Set());
+      
+      // If single match or small number, maybe zoom to them?
+      if (graphRef.current && matchedNodes.size === 1) {
+        const nodeId = Array.from(matchedNodes)[0];
+        const node = data.nodes.find((n: any) => n.id === nodeId);
+        if (node) {
+            // graphRef.current.centerAt(node.x, node.y, 1000);
+            // graphRef.current.zoom(2, 1000);
+        }
+      }
+    }
+  };
+
+  const handleClearSearch = () => {
+    setHighlightNodes(new Set());
+    setHighlightLinks(new Set());
+    setHoverNode(null);
+  };
+
+  // Helper: Interpolate between two colors
+  const interpolateColor = (score: number, start: number[], end: number[]) => {
+    const r = Math.round(start[0] + (end[0] - start[0]) * score);
+    const g = Math.round(start[1] + (end[1] - start[1]) * score);
+    const b = Math.round(start[2] + (end[2] - start[2]) * score);
+    return `rgb(${r}, ${g}, ${b})`;
+  };
+
+  const getNodeColor = (node: any) => {
+    // Zinc-300 (light) to Zinc-900 (dark)
+    const heatStart = [212, 212, 216]; 
+    const heatEnd = [24, 24, 27];
+
+    // 1. Hover Mode
+    if (hoverNode) {
+        if (highlightNodes.has(node.id)) {
+             // If filtered, show heat color even on hover for context?
+             if (nodeRelevance.size > 0) {
+                 const score = nodeRelevance.get(node.id) || 0;
+                 if (score > 0) {
+                     return interpolateColor(score, heatStart, heatEnd);
+                 }
+             }
+             if (node.group === 0) return "#52525b";
+             if (node.group === 1) return "#a1a1aa";
+             return "#d4d4d8";
+        }
+        return "#f4f4f5";
+    }
+
+    // 2. Filter Mode
+    if (nodeRelevance.size > 0) {
+         const score = nodeRelevance.get(node.id) || 0;
+         if (score === 0) return "#f4f4f5";
+         return interpolateColor(score, heatStart, heatEnd);
+    }
+
+    // 3. Search Mode
+    if (highlightNodes.size > 0) {
+        if (highlightNodes.has(node.id)) {
+             if (node.group === 0) return "#52525b";
+             if (node.group === 1) return "#a1a1aa";
+             return "#d4d4d8";
+        }
+        return "#f4f4f5";
+    }
+
+    // 4. Default
+    if (node.group === 0) return "#52525b";
+    if (node.group === 1) return "#a1a1aa";
+    return "#d4d4d8";
+  };
+
   return (
-    <div className="w-full h-full relative bg-white overflow-hidden rounded-lg border border-border" ref={containerRef} style={{ height: "calc(100vh - 200px)", minHeight: "500px" }}>
+    <div className="w-full h-full relative bg-white overflow-hidden" ref={containerRef}>
+      <div className="absolute top-6 left-6 flex flex-wrap gap-2 z-10">
+        <GraphFilter
+          title="Status"
+          options={[
+            { label: "Read", value: "read", icon: Eye },
+            { label: "Unread", value: "unread", icon: EyeOff },
+          ]}
+          selectedValues={statusFilters}
+          onSelect={setStatusFilters}
+        />
+        <GraphFilter
+          title="Personal Fit"
+          options={[
+            { label: "High Fit", value: "high" },
+            { label: "Medium Fit", value: "medium" },
+            { label: "Low Fit", value: "low" },
+          ]}
+          selectedValues={personalFitFilters}
+          onSelect={setPersonalFitFilters}
+        />
+        {/* 
+        <GraphFilter
+          title="Category"
+          options={[
+            { label: "Marketing", value: "marketing" },
+            { label: "Tech", value: "tech" },
+            // ...
+          ]}
+          selectedValues={categoryFilters}
+          onSelect={setCategoryFilters}
+        /> 
+        */}
+      </div>
+      
       <ForceGraph2D
         ref={graphRef}
         width={dimensions.width}
@@ -320,60 +516,71 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef>((props, ref) => {
         // Node Styling
         nodeRelSize={6}
         nodeVal={(node: any) => node.val || 1}
-        nodeColor={(node: any) => {
-          // If we are hovering, dim non-neighbors
-          if (hoverNode && !highlightNodes.has(node.id)) {
-            return "#e4e4e7"; // zinc-200 (faded)
-          }
-
-          // Standard colors
-          if (node.group === 0) return "#52525b"; // zinc-600
-          if (node.group === 1) return "#a1a1aa"; // zinc-400
-          return "#d4d4d8"; // zinc-300
-        }}
+        nodeColor={getNodeColor}
 
         // Label/Text Styling
         nodeCanvasObject={(node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
           const label = node.id;
           const fontSize = 12 / globalScale;
 
+          // Calculate colors
+          const color = getNodeColor(node);
+          const isHighlighted = highlightNodes.has(node.id);
+          const isHovered = hoverNode && (node.id === hoverNode.id || isHighlighted);
+          const isDimmed = color === "#f4f4f5";
+          
           // Draw Node Circle
-          const isHovered = hoverNode && highlightNodes.has(node.id);
-          const isBackground = hoverNode && !highlightNodes.has(node.id);
-
           ctx.beginPath();
           const r = Math.sqrt(Math.max(0, node.val || 1)) * 4;
           ctx.arc(node.x, node.y, r, 0, 2 * Math.PI, false);
 
           // Fill
-          if (isBackground) {
-            ctx.fillStyle = "#e4e4e7";
-          } else {
-            if (node.group === 0) ctx.fillStyle = "#52525b";
-            else if (node.group === 1) ctx.fillStyle = "#a1a1aa";
-            else ctx.fillStyle = "#d4d4d8";
-          }
+          ctx.fillStyle = color;
           ctx.fill();
 
-          // Border/Stroke for main nodes or hovered
-          if (node.group === 0 || isHovered) {
+          // Border/Stroke
+          const score = nodeRelevance.get(node.id) || 0;
+          const isRelevant = nodeRelevance.size > 0 && score > 0;
+
+          if (node.group === 0 || isHovered || isHighlighted || isRelevant) {
             ctx.strokeStyle = "#ffffff";
             ctx.lineWidth = 2 / globalScale;
             ctx.stroke();
           }
 
-          // Text Label
-          // Show label if:
-          // 1. It's a main node (group 0)
-          // 2. It's hovered or a neighbor of hovered
-          // 3. We are zoomed in enough (scale > 1.5)
-          const showLabel = node.group === 0 || isHovered || globalScale > 1.5;
+          // Text Label Visibility (Smooth Fade)
+          let opacity = 0;
+          
+          if (isHovered || (isHighlighted && !isDimmed)) {
+             opacity = 1;
+          } else if (!isDimmed) {
+             if (node.group === 0) {
+                opacity = 1;
+             } else if (node.group === 1) {
+                // Fade in between scale 1.1 and 1.4
+                opacity = (globalScale - 1.1) / (1.4 - 1.1);
+             } else if (node.group === 2) {
+                // Fade in between scale 2.2 and 2.6
+                opacity = (globalScale - 2.2) / (2.6 - 2.2);
+             }
+             // Clamp
+             opacity = Math.min(1, Math.max(0, opacity));
+          }
 
-          if (showLabel) {
+          if (opacity > 0) {
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillStyle = isBackground ? "#d4d4d8" : "#18181b";
+            
+            // Color logic: Dark Zinc for normal, Light Zinc for dimmed (though dimmed usually hidden)
+            // Normal: #18181b -> rgb(24, 24, 27)
+            // Dimmed: #e4e4e7 -> rgb(228, 228, 231)
+            const textR = isDimmed ? 228 : 24;
+            const textG = isDimmed ? 228 : 24;
+            const textB = isDimmed ? 231 : 27;
+
+            ctx.fillStyle = `rgba(${textR}, ${textG}, ${textB}, ${opacity})`;
             ctx.font = `${isHovered || node.group === 0 ? '600' : '400'} ${fontSize}px Sans-Serif`;
+            
             // Draw text below the node
             ctx.fillText(label, node.x, node.y + r + fontSize);
           }
@@ -382,8 +589,12 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef>((props, ref) => {
 
         // Link Styling
         linkColor={(link: any) => {
-          if (hoverNode) {
-            return highlightLinks.has(link) ? "#52525b" : "#f4f4f5"; // dark or very faint
+          if (highlightNodes.size > 0 || hoverNode) {
+             // If both ends are highlighted, show link normally, else dim
+             if (highlightNodes.has(link.source.id) && highlightNodes.has(link.target.id)) {
+                 return "#e4e4e7";
+             }
+             return "#f4f4f5"; // very faint
           }
           return "#e4e4e7"; // default light gray
         }}
@@ -391,13 +602,15 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef>((props, ref) => {
         linkDirectionalParticles={hoverNode ? 4 : 0}
         linkDirectionalParticleWidth={2}
 
-        // Physics - adjusted for better spacing
-        d3VelocityDecay={0.3}
-        d3AlphaDecay={0.01}
-        cooldownTicks={200}
+        // Physics - adjusted for floating feel
+        d3VelocityDecay={0.6} // High friction to reduce bouncing
+        d3AlphaDecay={0.005} // Slow cooldown for gentle drift
+        cooldownTicks={300}
         onNodeHover={handleNodeHover}
         onNodeClick={handleNodeClick}
       />
+
+      <GraphChat onSearch={handleSearch} onClear={handleClearSearch} />
     </div>
   );
 });
