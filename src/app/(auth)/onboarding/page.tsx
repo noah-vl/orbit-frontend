@@ -92,6 +92,13 @@ function OnboardingContent() {
     setCurrentStep((prev) => Math.max(prev - 1, 1))
   }
 
+  const handleFinish = () => {
+    setIsExiting(true)
+    setTimeout(() => {
+      router.push("/")
+    }, 800)
+  }
+
   const handleComplete = async (questionsData?: any) => {
     if (questionsData) {
       setQuestionsData(questionsData)
