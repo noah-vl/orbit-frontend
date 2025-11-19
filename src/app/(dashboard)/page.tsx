@@ -57,8 +57,8 @@ const feedItems: FeedItem[] = [
   {
     id: "3",
     author: {
-      name: "Orbit Bot",
-      handle: "@orbit_system",
+      name: "Solon Bot",
+      handle: "@solon_system",
       avatar: "", 
       role: "System",
     },
@@ -80,18 +80,20 @@ const feedItems: FeedItem[] = [
 
 export default function DashboardPage() {
   return (
-    <div className="space-y-10 max-w-5xl mx-auto w-full">
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-4xl font-bold tracking-tight mb-2">Feed</h1>
-          <p className="text-muted-foreground text-base">
-            Your personalized knowledge stream.
-          </p>
+    <div className="w-full">
+      <div className="sticky top-0 z-10 bg-background border-b">
+        <div className="flex items-center justify-between max-w-5xl mx-auto px-6 py-6 md:px-12 md:py-8">
+          <div>
+            <h1 className="text-4xl font-bold tracking-tight mb-2">Feed</h1>
+            <p className="text-muted-foreground text-base">
+              Your personalized knowledge stream.
+            </p>
+          </div>
+          <Badge variant="outline" className="font-mono px-3 py-1">Live</Badge>
         </div>
-        <Badge variant="outline" className="font-mono px-3 py-1">Live</Badge>
       </div>
       
-      <div className="space-y-6">
+      <div className="space-y-6 max-w-5xl mx-auto px-6 md:px-12 py-6 md:py-8">
         {feedItems.map((item) => (
           <FeedCard key={item.id} item={item} />
         ))}

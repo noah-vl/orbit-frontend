@@ -8,16 +8,25 @@ import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Mail, MapPin, Building2, Calendar, Link as LinkIcon, Twitter, Linkedin, Github } from "lucide-react"
+import Link from "next/link"
 
 export default function ProfilePage() {
   return (
-    <div className="flex flex-col gap-6 p-6 lg:p-10 max-w-5xl mx-auto w-full">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold font-serif tracking-tight">Profile</h1>
-        <Button variant="outline">Edit Profile</Button>
+    <div className="w-full">
+      <div className="sticky top-0 z-10 bg-background border-b">
+        <div className="flex items-center justify-between max-w-5xl mx-auto px-6 py-6 md:px-12 md:py-8">
+          <h1 className="text-3xl font-bold tracking-tight">Profile</h1>
+          <div className="flex gap-3">
+            <Button variant="outline" asChild>
+              <Link href="/onboarding">Start Onboarding</Link>
+            </Button>
+            <Button variant="outline">Edit Profile</Button>
+          </div>
+        </div>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-[300px_1fr]">
+      <div className="flex flex-col gap-6 p-6 md:p-12 max-w-5xl mx-auto w-full">
+        <div className="grid gap-6 md:grid-cols-[300px_1fr]">
         {/* Sidebar / Main Profile Card */}
         <div className="flex flex-col gap-6">
           <Card className="overflow-hidden">
@@ -29,7 +38,7 @@ export default function ProfilePage() {
                   <AvatarFallback className="text-4xl">JD</AvatarFallback>
                 </Avatar>
                 <div className="mt-4 text-center">
-                  <h2 className="text-2xl font-bold font-serif">Jane Doe</h2>
+                  <h2 className="text-2xl font-bold">Jane Doe</h2>
                   <p className="text-muted-foreground">@janedoe</p>
                 </div>
               </div>
@@ -45,7 +54,7 @@ export default function ProfilePage() {
                 </div>
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Mail className="h-4 w-4" />
-                  <span>jane@orbit.co</span>
+                  <span>jane@solon.co</span>
                 </div>
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Calendar className="h-4 w-4" />
@@ -77,7 +86,7 @@ export default function ProfilePage() {
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-lg font-serif">Interests</CardTitle>
+              <CardTitle className="text-lg">Interests</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="flex flex-wrap gap-2">
@@ -103,12 +112,12 @@ export default function ProfilePage() {
             <TabsContent value="overview" className="mt-6 space-y-6">
               <Card>
                 <CardHeader>
-                  <CardTitle className="font-serif">About</CardTitle>
+                  <CardTitle>About</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <p className="text-muted-foreground leading-relaxed">
                     Senior Product Designer with a passion for building accessible and inclusive digital experiences. 
-                    Currently leading the design system team at Orbit. Previously worked at TechFlow and DesignCo.
+                    Currently leading the design system team at Solon. Previously worked at TechFlow and DesignCo.
                     Obsessed with typography, micro-interactions, and clean code.
                   </p>
                 </CardContent>
@@ -116,7 +125,7 @@ export default function ProfilePage() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle className="font-serif">Current Focus</CardTitle>
+                  <CardTitle>Current Focus</CardTitle>
                   <CardDescription>What I'm working on this quarter</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -145,7 +154,7 @@ export default function ProfilePage() {
             <TabsContent value="activity" className="mt-6">
               <Card>
                 <CardHeader>
-                  <CardTitle className="font-serif">Recent Activity</CardTitle>
+                  <CardTitle>Recent Activity</CardTitle>
                   <CardDescription>Latest contributions and updates</CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -179,7 +188,7 @@ export default function ProfilePage() {
             <TabsContent value="settings" className="mt-6">
                <Card>
                 <CardHeader>
-                  <CardTitle className="font-serif">Profile Settings</CardTitle>
+                  <CardTitle>Profile Settings</CardTitle>
                   <CardDescription>Update your personal information</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -200,6 +209,7 @@ export default function ProfilePage() {
           </Tabs>
         </div>
       </div>
+    </div>
     </div>
   )
 }
