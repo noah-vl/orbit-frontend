@@ -1,6 +1,6 @@
 "use client"
 
-import { Sidebar } from "@/components/shared/sidebar"
+import { Navbar } from "@/components/shared/navbar"
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute"
 import { motion } from "framer-motion"
 
@@ -15,9 +15,9 @@ export default function DashboardLayout({
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ duration: 0.5 }}
-        className="flex h-screen overflow-hidden flex-col md:flex-row bg-background"
+        className="flex h-screen overflow-hidden flex-col bg-background"
       >
-        <Sidebar className="hidden md:block border-r" />
+        <Navbar />
         <main className="flex-1 overflow-y-auto">
           {children}
         </main>

@@ -30,6 +30,7 @@ interface GraphFilterProps {
   }[];
   selectedValues: Set<string>;
   onSelect: (selected: Set<string>) => void;
+  enableSearch?: boolean;
 }
 
 export function GraphFilter({
@@ -37,11 +38,12 @@ export function GraphFilter({
   options,
   selectedValues,
   onSelect,
+  enableSearch = true,
 }: GraphFilterProps) {
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button variant="outline" size="sm" className="h-8 border-dashed">
+        <Button variant="outline" size="sm" className="h-9 border-dashed">
           <PlusCircle className="mr-2 h-4 w-4" />
           {title}
           {selectedValues?.size > 0 && (
@@ -81,7 +83,7 @@ export function GraphFilter({
       </PopoverTrigger>
       <PopoverContent className="w-[200px] p-0" align="start">
         <Command>
-          <CommandInput placeholder={title} />
+          {enableSearch && <CommandInput placeholder={title} />}
           <CommandList>
             <CommandEmpty>No results found.</CommandEmpty>
             <CommandGroup>

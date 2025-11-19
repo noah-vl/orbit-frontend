@@ -1,15 +1,17 @@
 "use client";
 
-import { useEffect, useState, useRef, forwardRef, useImperativeHandle, useCallback } from "react";
+import { useEffect, useState, useRef, forwardRef, useImperativeHandle, useCallback, useMemo } from "react";
 import dynamic from "next/dynamic";
 import Image from "next/image";
 import { GraphChat } from "@/components/features/graph/graph-chat";
 import { GraphFilter } from "@/components/features/graph/graph-filter";
 import { generateData } from "@/components/features/graph/mock-data";
-import { Eye, EyeOff, Tag, User, X } from "lucide-react";
+import { Eye, EyeOff, Tag, User, X, ZoomIn, ZoomOut, RefreshCw } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 
 // Helper for deterministic random values based on string seed
 const getStableRandom = (seed: string) => {
@@ -82,7 +84,7 @@ const fetchGraphData = async (teamId: string | null, accessToken: string | null)
   }
 };
 
-export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boolean }>(({ showMockData = false }, ref) => {
+export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boolean }>(({ showMockData: initialShowMockData = false }, ref) => {
   const { teamId, session } = useAuth();
   const [data, setData] = useState<{ nodes: any[], links: any[] }>({ nodes: [], links: [] });
   const [fetchedData, setFetchedData] = useState<{ nodes: any[], links: any[] }>({ nodes: [], links: [] });
@@ -100,6 +102,7 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [showNotification, setShowNotification] = useState(false);
   const [isFadingOut, setIsFadingOut] = useState(false);
+  const [showMockData, setShowMockData] = useState(initialShowMockData);
   
   // Filter states
   const [statusFilters, setStatusFilters] = useState<Set<string>>(new Set());
@@ -108,23 +111,61 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
 
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<any>(null);
+  const zoomTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const zoomAdjustTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isZoomingRef = useRef(false);
+  const backgroundCanvasRef = useRef<HTMLCanvasElement>(null);
+  const [graphTransform, setGraphTransform] = useState({ zoom: 1, x: 0, y: 0 });
+
+  // Cleanup function to cancel any pending zoom operations
+  const cancelPendingZooms = useCallback(() => {
+    if (zoomTimeoutRef.current) {
+      clearTimeout(zoomTimeoutRef.current);
+      zoomTimeoutRef.current = null;
+    }
+    if (zoomAdjustTimeoutRef.current) {
+      clearTimeout(zoomAdjustTimeoutRef.current);
+      zoomAdjustTimeoutRef.current = null;
+    }
+    isZoomingRef.current = false;
+  }, []);
+
+  const handleZoomIn = () => {
+    if (graphRef.current) {
+      graphRef.current.zoom(graphRef.current.zoom() * 1.2, 400);
+    }
+  };
+
+  const handleZoomOut = () => {
+    if (graphRef.current) {
+      graphRef.current.zoom(graphRef.current.zoom() / 1.2, 400);
+    }
+  };
+
+  const handleReset = () => {
+    // Cancel any pending zoom operations
+    cancelPendingZooms();
+    
+    if (graphRef.current) {
+      isZoomingRef.current = true;
+      graphRef.current.zoomToFit(400);
+      // Apply zoom-out multiplier after zoom animation completes
+      zoomAdjustTimeoutRef.current = setTimeout(() => {
+        if (graphRef.current) {
+          graphRef.current.zoom(graphRef.current.zoom() * 0.60, 400);
+          // Mark zoom as complete after adjustment animation
+          setTimeout(() => {
+            isZoomingRef.current = false;
+          }, 400);
+        }
+      }, 400);
+    }
+  };
 
   useImperativeHandle(ref, () => ({
-    zoomIn: () => {
-      if (graphRef.current) {
-        graphRef.current.zoom(graphRef.current.zoom() * 1.2, 400);
-      }
-    },
-    zoomOut: () => {
-      if (graphRef.current) {
-        graphRef.current.zoom(graphRef.current.zoom() / 1.2, 400);
-      }
-    },
-    reset: () => {
-      if (graphRef.current) {
-        graphRef.current.zoomToFit(400);
-      }
-    }
+    zoomIn: handleZoomIn,
+    zoomOut: handleZoomOut,
+    reset: handleReset
   }));
 
   const handleNodeClick = (node: any) => {
@@ -174,6 +215,13 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
 
     return () => window.removeEventListener("resize", updateDimensions);
   }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      cancelPendingZooms();
+    };
+  }, [cancelPendingZooms]);
 
   useEffect(() => {
     // Combine data and apply layout
@@ -250,16 +298,34 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
 
     setData({ nodes, links });
 
-    // Auto-zoom to fit after a short delay (only if not in search mode)
-    if (highlightNodes.size === 0) {
-      setTimeout(() => {
-        if (graphRef.current) {
+    // Auto-zoom to fit after a short delay (only if not in search mode and not already zooming)
+    if (highlightNodes.size === 0 && !isZoomingRef.current) {
+      // Cancel any pending zoom operations
+      cancelPendingZooms();
+      
+      zoomTimeoutRef.current = setTimeout(() => {
+        if (graphRef.current && !isZoomingRef.current) {
+          isZoomingRef.current = true;
           graphRef.current.zoomToFit(400);
+          // Apply zoom-out multiplier after zoom animation completes
+          zoomAdjustTimeoutRef.current = setTimeout(() => {
+            if (graphRef.current) {
+              graphRef.current.zoom(graphRef.current.zoom() * 0.60, 400);
+              // Mark zoom as complete after adjustment animation
+              setTimeout(() => {
+                isZoomingRef.current = false;
+              }, 400);
+            }
+          }, 400);
         }
       }, 500);
     }
 
-  }, [fetchedData, showMockData, dimensions]);
+    // Cleanup function to cancel pending zooms when dependencies change
+    return () => {
+      cancelPendingZooms();
+    };
+  }, [fetchedData, showMockData]);
 
   useEffect(() => {
     if (graphRef.current && data.nodes.length > 0) {
@@ -859,8 +925,104 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
     return "#d4d4d8";
   };
 
+  // Helper to update background transform (kept for onZoom callback)
+  const updateBackgroundTransform = useCallback((zoom: number | { k: number; x: number; y: number }) => {
+    // The background is now updated via requestAnimationFrame, but we keep this
+    // for the onZoom callback to trigger updates
+    if (!graphRef.current) return;
+    
+    const zoomValue = typeof zoom === 'number' ? zoom : zoom.k;
+    setGraphTransform(prev => ({ ...prev, zoom: zoomValue }));
+  }, []);
+
+  // Continuously update background to track pan/zoom
+  useEffect(() => {
+    let animationFrameId: number;
+    
+    const updateBackground = () => {
+      const canvas = backgroundCanvasRef.current;
+      if (!canvas || !graphRef.current) {
+        animationFrameId = requestAnimationFrame(updateBackground);
+        return;
+      }
+      
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        animationFrameId = requestAnimationFrame(updateBackground);
+        return;
+      }
+      
+      // Get current transform from graph
+      try {
+        const currentZoom = graphRef.current.zoom();
+        const centerScreenX = dimensions.width / 2;
+        const centerScreenY = dimensions.height / 2;
+        const centerGraph = graphRef.current.screen2GraphCoords(centerScreenX, centerScreenY);
+        
+        const zoom = currentZoom || 1;
+        const centerX = centerGraph.x || 0;
+        const centerY = centerGraph.y || 0;
+        
+        // Set canvas size
+        canvas.width = dimensions.width;
+        canvas.height = dimensions.height;
+        
+        // Clear canvas
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Draw dots
+        const dotSpacing = 20; // Base spacing in graph coordinates
+        const dotSize = 1;
+        const dotColor = 'rgba(0, 0, 0, 0.05)';
+        
+        ctx.fillStyle = dotColor;
+        
+        // Calculate visible area in graph coordinates
+        const visibleWidth = dimensions.width / zoom;
+        const visibleHeight = dimensions.height / zoom;
+        
+        // Calculate bounds
+        const startX = Math.floor((centerX - visibleWidth / 2) / dotSpacing) * dotSpacing;
+        const startY = Math.floor((centerY - visibleHeight / 2) / dotSpacing) * dotSpacing;
+        const endX = centerX + visibleWidth / 2 + dotSpacing;
+        const endY = centerY + visibleHeight / 2 + dotSpacing;
+        
+        // Draw dots
+        for (let x = startX; x < endX; x += dotSpacing) {
+          for (let y = startY; y < endY; y += dotSpacing) {
+            // Convert graph coordinates to screen coordinates
+            const screenX = (x - centerX) * zoom + dimensions.width / 2;
+            const screenY = (y - centerY) * zoom + dimensions.height / 2;
+            
+            ctx.beginPath();
+            ctx.arc(screenX, screenY, dotSize, 0, 2 * Math.PI);
+            ctx.fill();
+          }
+        }
+      } catch (e) {
+        // Fallback if methods not available
+      }
+      
+      animationFrameId = requestAnimationFrame(updateBackground);
+    };
+    
+    updateBackground();
+    
+    return () => {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
+    };
+  }, [dimensions]);
+
   return (
     <div className="w-full h-full relative bg-white overflow-hidden" ref={containerRef}>
+      {/* Background canvas with dots */}
+      <canvas
+        ref={backgroundCanvasRef}
+        className="absolute inset-0 pointer-events-none"
+        style={{ zIndex: 0 }}
+      />
       <div className="absolute top-6 left-6 flex flex-wrap gap-2 z-10">
         <GraphFilter
           title="Status"
@@ -870,6 +1032,7 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
           ]}
           selectedValues={statusFilters}
           onSelect={setStatusFilters}
+          enableSearch={false}
         />
         <GraphFilter
           title="Personal Fit"
@@ -880,6 +1043,7 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
           ]}
           selectedValues={personalFitFilters}
           onSelect={setPersonalFitFilters}
+          enableSearch={false}
         />
         {/* 
         <GraphFilter
@@ -895,6 +1059,25 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
         */}
       </div>
       
+      <div className="absolute top-6 right-6 flex items-center gap-4 z-10">
+        <div className="flex items-center space-x-2 backdrop-blur-sm rounded-lg px-3 h-9">
+          <Switch id="mock-data" checked={showMockData} onCheckedChange={setShowMockData} />
+          <Label htmlFor="mock-data" className="text-sm">Show Mock Data</Label>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" size="icon" onClick={handleZoomIn}>
+            <ZoomIn className="h-4 w-4" />
+          </Button>
+          <Button variant="outline" size="icon" onClick={handleZoomOut}>
+            <ZoomOut className="h-4 w-4" />
+          </Button>
+          <Button variant="outline" size="icon" onClick={handleReset}>
+            <RefreshCw className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+      
+      <div style={{ zIndex: 1, position: 'relative' }}>
       <ForceGraph2D
         ref={graphRef}
         width={dimensions.width}
@@ -902,7 +1085,15 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
         graphData={data}
 
         // Colors & Style
-        backgroundColor="#ffffff"
+        backgroundColor="transparent"
+        
+        // Track zoom and pan to update background
+        onZoom={(zoomObj) => {
+          if (graphRef.current) {
+            const zoom = zoomObj.k || zoomObj;
+            updateBackgroundTransform(zoom);
+          }
+        }}
 
         // Node Styling
         nodeRelSize={6}
@@ -1003,6 +1194,7 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
         onNodeHover={handleNodeHover}
         onNodeClick={handleNodeClick}
       />
+      </div>
 
       <GraphChat 
         onSearch={handleSearch} 
