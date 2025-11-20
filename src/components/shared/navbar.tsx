@@ -25,8 +25,17 @@ export function Navbar() {
           </Link>
         </div>
 
-        {/* Profile Icon and Settings */}
+        {/* Graph and Profile Icons */}
         <div className="flex items-center gap-2">
+          <Link href="/graph" className="block">
+            <Button 
+              variant={pathname === "/graph" ? "secondary" : "ghost"} 
+              size="icon"
+              className="h-9 w-9"
+            >
+              <GitGraph className="h-4 w-4" />
+            </Button>
+          </Link>
           <Link href="/profile" className="block">
             <Button 
               variant={pathname === "/profile" ? "secondary" : "ghost"} 
@@ -34,15 +43,6 @@ export function Navbar() {
               className="h-9 w-9"
             >
               <User className="h-4 w-4" />
-            </Button>
-          </Link>
-          <Link href="/profile" className="block">
-            <Button 
-              variant="ghost" 
-              size="icon"
-              className="h-9 w-9"
-            >
-              <Settings className="h-4 w-4" />
             </Button>
           </Link>
         </div>

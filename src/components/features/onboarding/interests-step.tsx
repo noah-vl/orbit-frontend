@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 
 interface InterestsStepProps extends HTMLMotionProps<"div"> {
-  onNext: () => void
+  onNext: (data?: { interests: string[]; consumptionPreference: string }) => void
   onBack?: () => void
 }
 
@@ -104,7 +104,7 @@ export function InterestsStep({ onNext, onBack, className, ...props }: Interests
 
         <div className="pt-4">
           <Button 
-            onClick={onNext}
+            onClick={() => onNext({ interests, consumptionPreference: consumptionPref })}
             className="w-full bg-white text-black hover:bg-white/90 h-12 text-lg font-medium transition-transform active:scale-95"
           >
             Continue

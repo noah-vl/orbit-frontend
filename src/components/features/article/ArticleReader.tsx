@@ -54,6 +54,8 @@ import { supabase } from "@/lib/supabase";
 import { CommentSidebar, CommentSidebarRef } from "./CommentSidebar";
 import { HighlightToolbar } from "./HighlightToolbar";
 import { Comment, TextHighlight } from "./types";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 interface ArticleReaderProps {
     articleId: string;
@@ -83,6 +85,7 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
     const [selectedCommentId, setSelectedCommentId] = useState<string | null>(null);
     const [replyingToId, setReplyingToId] = useState<string | null>(null);
     const [replyText, setReplyText] = useState<Map<string, string>>(new Map());
+    const [randomAuthor, setRandomAuthor] = useState<string>('Simon');
     
     const editor = useEditor({
         extensions: [
@@ -114,6 +117,8 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
         if (teamId) {
             fetchTeamMembers();
         }
+        // Generate random author once when component mounts or articleId changes
+        setRandomAuthor(Math.random() < 0.5 ? 'Simon' : 'Noah');
     }, [articleId, teamId]);
 
     const fetchTeamMembers = async () => {
@@ -413,9 +418,10 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
 
     const fetchArticle = async () => {
         try {
-            // Fetch business insights (relevant to Omen)
-            const businessResponse = await fetch(
-                `https://xltqabrlmfalosewvjby.supabase.co/functions/v1/get_article?id=${articleId}&role=business`,
+            // Fetch article with personalized insights based on user's profile
+            // Don't pass role parameter - let backend determine from user's profile
+            const articleResponse = await fetch(
+                `https://xltqabrlmfalosewvjby.supabase.co/functions/v1/get_article?id=${articleId}`,
                 { 
                     headers: { 
                         apikey: SUPABASE_ANON_KEY,
@@ -423,13 +429,13 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
                     } 
                 }
             );
-            const businessData = await businessResponse.json();
+            const articleData = await articleResponse.json();
             
-            // Set article with business insights at top, full article below
+            // Set article with personalized insights based on user's role
             setArticle({
-                ...businessData.article,
-                business_summary: businessData.insight?.summary || null,
-                why_it_matters: businessData.insight?.why_it_matters || null,
+                ...articleData.article,
+                business_summary: articleData.insight?.summary || null,
+                why_it_matters: articleData.insight?.why_it_matters || null,
             });
         } catch (error) {
             console.error("Error fetching article:", error);
@@ -489,12 +495,13 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
             const data = await response.json();
             console.log('Fetched comments:', data);
             // Map the nested profile data to author_name
+            // Note: Database uses parent_comment_id, but frontend expects parent_id
             const commentsWithAuthors = data.map((comment: any) => {
                 const processed = {
                     ...comment,
                     author_name: comment.profiles?.full_name || 'Unknown',
                     mentioned_users: comment.mentioned_users || [],
-                    parent_id: comment.parent_id || null,
+                    parent_id: comment.parent_comment_id || null, // Map parent_comment_id to parent_id
                 };
                 console.log('Processed comment:', processed.id, 'mentioned_users:', processed.mentioned_users);
                 return processed;
@@ -651,42 +658,43 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
         if (!replyBody.trim()) return;
 
         try {
-            // Fake backend call - in real implementation, this would POST to the API
             console.log('Adding reply:', { parentId, replyBody, author_id: currentUserId });
             
-            // Simulate API call
-            const fakeReply: Comment = {
-                id: `reply-${Date.now()}`,
+            // Extract mentioned user IDs from the reply body (similar to addComment)
+            // For now, we'll support mentions in replies too
+            const mentionedUserIds: string[] = [];
+            // TODO: Extract mentions from replyBody if needed (similar to addComment logic)
+            
+            // Create the reply in the database with parent_comment_id
+            const replyPayload = {
+                article_id: articleId,
                 body: replyBody,
-                created_at: new Date().toISOString(),
-                author_id: currentUserId || '',
-                author_name: user?.email?.split('@')[0] || 'You',
-                mentioned_users: [],
-                parent_id: parentId,
-                replies: [],
+                author_id: currentUserId || "",
+                parent_comment_id: parentId, // Use parent_comment_id for database
+                mentioned_users: mentionedUserIds.length > 0 ? mentionedUserIds : null,
             };
-
-            // Update comments state by adding the reply to the appropriate parent
-            setComments(prevComments => {
-                const addReplyToComment = (comments: Comment[]): Comment[] => {
-                    return comments.map(comment => {
-                        if (comment.id === parentId) {
-                            return {
-                                ...comment,
-                                replies: [...(comment.replies || []), fakeReply]
-                            };
-                        }
-                        if (comment.replies && comment.replies.length > 0) {
-                            return {
-                                ...comment,
-                                replies: addReplyToComment(comment.replies)
-                            };
-                        }
-                        return comment;
-                    });
-                };
-                return addReplyToComment(prevComments);
+            
+            console.log('Sending reply payload:', replyPayload);
+            
+            const replyResponse = await fetch("https://xltqabrlmfalosewvjby.supabase.co/rest/v1/comments", {
+                method: "POST",
+                headers: {
+                    apikey: SUPABASE_ANON_KEY,
+                    ...(session?.access_token && { Authorization: `Bearer ${session.access_token}` }),
+                    "Content-Type": "application/json",
+                    Prefer: "return=representation",
+                },
+                body: JSON.stringify(replyPayload),
             });
+            
+            if (!replyResponse.ok) {
+                const errorData = await replyResponse.json();
+                console.error("Error creating reply:", errorData);
+                throw new Error("Failed to create reply");
+            }
+            
+            const createdReply = await replyResponse.json();
+            console.log('Created reply response:', createdReply);
 
             // Clear reply input
             setReplyText(prev => {
@@ -695,6 +703,9 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
                 return newMap;
             });
             setReplyingToId(null);
+            
+            // Refresh comments to get the updated thread structure
+            fetchComments();
         } catch (error) {
             console.error("Error adding reply:", error);
         }
@@ -738,10 +749,10 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
                             <div className="flex items-center gap-2">
                                 <span>Added by</span>
                                 <Avatar className="h-6 w-6">
-                                    <AvatarImage src={`https://avatar.vercel.sh/${article.author || 'Unknown'}`} />
-                                    <AvatarFallback>{(article.author || 'U')[0]}</AvatarFallback>
+                                    <AvatarImage src={`https://avatar.vercel.sh/${randomAuthor}`} />
+                                    <AvatarFallback>{randomAuthor[0]}</AvatarFallback>
                                 </Avatar>
-                                <span className="font-medium text-foreground">{article.author || 'Unknown Author'}</span>
+                                <span className="font-medium text-foreground">{randomAuthor}</span>
                             </div>
                             <span>•</span>
                             <span>{new Date(article.created_at || Date.now()).toLocaleDateString(undefined, { 
@@ -817,7 +828,13 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
                                                         Why This Matters to Omen
                                                     </h2>
                                                 </div>
-                                                <p className="text-lg leading-relaxed text-foreground/90 font-light">{article.why_it_matters}</p>
+                                                <div className="prose prose-lg max-w-none text-foreground/90 text-lg leading-relaxed font-light">
+                                                    <ReactMarkdown 
+                                                        remarkPlugins={[remarkGfm]}
+                                                    >
+                                                        {article.why_it_matters}
+                                                    </ReactMarkdown>
+                                                </div>
                                             </div>
                                         ) : null}
                                         
@@ -832,8 +849,12 @@ export function ArticleReader({ articleId }: ArticleReaderProps) {
                                                         Key Insights for You
                                                     </h2>
                                                 </div>
-                                                <div className="prose prose-lg max-w-none">
-                                                    <p className="whitespace-pre-wrap leading-relaxed text-foreground/90 font-light">{article.business_summary}</p>
+                                                <div className="prose prose-lg max-w-none text-foreground/90 leading-relaxed font-light">
+                                                    <ReactMarkdown 
+                                                        remarkPlugins={[remarkGfm]}
+                                                    >
+                                                        {article.business_summary}
+                                                    </ReactMarkdown>
                                                 </div>
                                             </div>
                                         ) : (

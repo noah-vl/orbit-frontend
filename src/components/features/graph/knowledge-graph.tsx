@@ -580,7 +580,7 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
         body: JSON.stringify({
           query: trimmedQuery,
           team_id: teamId,
-          limit: 20,
+          limit: 5,
         }),
         cache: 'no-store', // Ensure fresh request (no Cache-Control header needed)
       });
@@ -602,7 +602,7 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
           body: JSON.stringify({
             query: trimmedQuery,
             team_id: teamId,
-            limit: 20,
+            limit: 5,
           }),
           cache: 'no-store',
         });
@@ -744,9 +744,9 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
         }
       });
 
-      // Sort by similarity (highest first)
+      // Sort by similarity (highest first) and limit to top 5
       results.sort((a, b) => b.similarity - a.similarity);
-      setSearchResults(results);
+      setSearchResults(results.slice(0, 5));
 
       // Find matching article nodes in the graph
       originalNodes.forEach((node: any) => {
@@ -926,13 +926,14 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
   };
 
   // Helper to update background transform (kept for onZoom callback)
+  // Note: We use requestAnimationFrame to defer state updates and avoid render warnings
   const updateBackgroundTransform = useCallback((zoom: number | { k: number; x: number; y: number }) => {
-    // The background is now updated via requestAnimationFrame, but we keep this
-    // for the onZoom callback to trigger updates
-    if (!graphRef.current) return;
-    
-    const zoomValue = typeof zoom === 'number' ? zoom : zoom.k;
-    setGraphTransform(prev => ({ ...prev, zoom: zoomValue }));
+    // Defer state update to avoid updating during render
+    requestAnimationFrame(() => {
+      if (!graphRef.current) return;
+      const zoomValue = typeof zoom === 'number' ? zoom : zoom.k;
+      setGraphTransform(prev => ({ ...prev, zoom: zoomValue }));
+    });
   }, []);
 
   // Continuously update background to track pan/zoom

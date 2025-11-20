@@ -39,6 +39,10 @@ function OnboardingContent() {
     decisionInvolvement: string
     updateTypes: string[]
   } | null>(null)
+  const [interestsData, setInterestsData] = useState<{
+    interests: string[]
+    consumptionPreference: string
+  } | null>(null)
   const totalSteps = 4
 
   // Check if user is already authenticated
@@ -79,8 +83,9 @@ function OnboardingContent() {
         setUserInfo(data)
       } else if (prev === 2 && data) {
         setQuestionsData(data)
+      } else if (prev === 3 && data) {
+        setInterestsData(data)
       }
-      // Note: Step 3 (InterestsStep) data can be stored here if needed
       // Step 4 (FinalStep) will call handleComplete via onFinish
       return nextStep
     })
@@ -250,7 +255,7 @@ function OnboardingContent() {
       const joinResult = await joinResponse.json()
       console.log("Step 3 complete: Team joined successfully", joinResult)
 
-      // Step 4: Update profile with role and interests (non-blocking)
+      // Step 4: Update profile with full_name, role, and interests (non-blocking)
       // Get user ID from the signup response
       const userId = signupData.user?.id
       
@@ -265,12 +270,15 @@ function OnboardingContent() {
             "apikey": SUPABASE_ANON_KEY,
           },
           body: JSON.stringify({
+            full_name: userInfo.name,
             role: userInfo.role,
             interests: JSON.stringify({
               department: userInfo.department,
               responsibilities: questionsData?.responsibilities || [],
               decisionInvolvement: questionsData?.decisionInvolvement || "",
               updateTypes: questionsData?.updateTypes || [],
+              topics: interestsData?.interests || [],
+              consumptionPreference: interestsData?.consumptionPreference || "",
             }),
           }),
         })

@@ -81,18 +81,7 @@ export const CommentSidebar = forwardRef<CommentSidebarRef, CommentSidebarProps>
     return (
         <>
             <div 
-                className={cn(
-                    "w-80 border-l bg-muted/5 flex flex-col transition-opacity duration-200",
-                    activeTab !== "full-article" && "opacity-50"
-                )}
-                onMouseMove={(e) => {
-                    if (activeTab !== "full-article") {
-                        onCursorTooltipChange({ show: true, x: e.clientX, y: e.clientY });
-                    } else if (cursorTooltip.show) {
-                        onCursorTooltipChange({ show: false, x: 0, y: 0 });
-                    }
-                }}
-                onMouseLeave={() => onCursorTooltipChange({ show: false, x: 0, y: 0 })}
+                className="w-80 border-l bg-muted/5 flex flex-col"
             >
                 <div className="p-4 border-b">
                     <h2 className="font-semibold mb-2">{totalCommentCount} Comments</h2>
@@ -136,10 +125,20 @@ export const CommentSidebar = forwardRef<CommentSidebarRef, CommentSidebarProps>
                 </div>
 
                 {/* Add Comment */}
-                <div className={cn(
-                    "p-4 border-t relative",
-                    activeTab !== "full-article" && "pointer-events-none"
-                )}>
+                <div 
+                    className={cn(
+                        "p-4 border-t relative transition-opacity duration-200",
+                        activeTab !== "full-article" && "opacity-50 pointer-events-none"
+                    )}
+                    onMouseMove={(e) => {
+                        if (activeTab !== "full-article") {
+                            onCursorTooltipChange({ show: true, x: e.clientX, y: e.clientY });
+                        } else if (cursorTooltip.show) {
+                            onCursorTooltipChange({ show: false, x: 0, y: 0 });
+                        }
+                    }}
+                    onMouseLeave={() => onCursorTooltipChange({ show: false, x: 0, y: 0 })}
+                >
                     {selectedText && (
                         <div className="mb-2 p-2 bg-blue-50 rounded text-xs italic border-l-2 border-blue-400">
                             Commenting on: "{selectedText.substring(0, 100)}{selectedText.length > 100 ? '...' : ''}"
