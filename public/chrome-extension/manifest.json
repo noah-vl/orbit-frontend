@@ -1,0 +1,46 @@
+{
+    "manifest_version": 3,
+    "name": "Orbit Article Saver",
+    "version": "1.0",
+    "description": "Add articles to your Orbit library",
+    "icons": {
+        "16": "icon-16.png",
+        "48": "icon-48.png",
+        "128": "icon-128.png"
+    },
+    "permissions": [
+        "activeTab",
+        "scripting",
+        "storage"
+    ],
+    "host_permissions": [
+        "https://xltqabrlmfalosewvjby.supabase.co/*"
+    ],
+    "action": {
+        "default_popup": "popup.html",
+        "default_icon": {
+            "16": "icon-16.png",
+            "48": "icon-48.png",
+            "128": "icon-128.png"
+        }
+    },
+    "background": {
+        "service_worker": "background.js"
+    },
+    "content_scripts": [
+        {
+            "matches": ["<all_urls>"],
+            "js": ["content.js"],
+            "run_at": "document_idle"
+        }
+    ],
+    "web_accessible_resources": [
+        {
+            "resources": ["injected.js", "navbar-logo.png"],
+            "matches": ["<all_urls>"]
+        }
+    ],
+    "content_security_policy": {
+        "extension_pages": "script-src 'self'; object-src 'self'"
+    }
+}
