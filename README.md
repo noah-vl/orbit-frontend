@@ -1,6 +1,9 @@
 # Orbit
 
-![Splash](public/splash.png)
+<div style="display: flex; gap: 20px; align-items: center;">
+  <img src="public/splash.png" alt="Splash" style="max-width: 50%; height: auto;" />
+  <img src="public/graph.png" alt="Graph" style="max-width: 50%; height: auto;" />
+</div>
 
 **A collaborative "knowledge brain" for external information**
 
