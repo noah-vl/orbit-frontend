@@ -4,30 +4,33 @@ import { useEffect, useState, useRef, forwardRef, useImperativeHandle, useCallba
 import dynamic from "next/dynamic";
 import Image from "next/image";
 import { GraphChat } from "@/components/features/graph/graph-chat";
-import { GraphFilter } from "@/components/features/graph/graph-filter";
 import { generateData } from "@/components/features/graph/mock-data";
-import { Eye, EyeOff, Tag, User, X, ZoomIn, ZoomOut, RefreshCw } from "lucide-react";
+import { Tag, User, X, ZoomIn, ZoomOut, RefreshCw } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 
-// Helper for deterministic random values based on string seed
-const getStableRandom = (seed: string) => {
-  let hash = 0;
-  for (let i = 0; i < seed.length; i++) {
-    hash = ((hash << 5) - hash) + seed.charCodeAt(i);
-    hash |= 0;
-  }
-  return Math.abs(hash) / 2147483647;
-};
-
 // Dynamically import ForceGraph2D with no SSR
 const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), {
   ssr: false,
   loading: () => <div className="h-[600px] w-full flex items-center justify-center bg-muted/10">Loading Graph...</div>,
 });
+
+const GRAPH_RING_RADII = {
+  base: 150,
+  subtopic: 350,
+  article: 700,
+} as const;
+
+const GRAPH_RING_PADDING = 50;
+
+const LINK_DISTANCES = {
+  baseToSubtopic: GRAPH_RING_RADII.subtopic - GRAPH_RING_RADII.base + GRAPH_RING_PADDING, // keep subtopics comfortably outside base ring
+  subtopicToArticle: GRAPH_RING_RADII.article - GRAPH_RING_RADII.subtopic, // span between subtopic and article rings
+  fallback: 300,
+} as const;
 
 export interface KnowledgeGraphRef {
   zoomIn: () => void;
@@ -98,24 +101,26 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
   const [categoryResults, setCategoryResults] = useState<Array<{ category1: string; category2: string; sharedArticles: number; similarity: number }>>([]);
   const [currentQuery, setCurrentQuery] = useState<string>("");
   const [hoverNode, setHoverNode] = useState<any>(null);
-  const [searchSummary, setSearchSummary] = useState<string>("");
+  const [lockedNodeId, setLockedNodeId] = useState<string | null>(null);
+  const [notificationMessage, setNotificationMessage] = useState<string>("");
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [showNotification, setShowNotification] = useState(false);
   const [isFadingOut, setIsFadingOut] = useState(false);
   const [showMockData, setShowMockData] = useState(initialShowMockData);
+  const [isQueryFocused, setIsQueryFocused] = useState(false);
+  const [shouldPersistNotification, setShouldPersistNotification] = useState(false);
+  const [activeResultIndex, setActiveResultIndex] = useState<number | null>(null);
   
-  // Filter states
-  const [statusFilters, setStatusFilters] = useState<Set<string>>(new Set());
-  const [categoryFilters, setCategoryFilters] = useState<Set<string>>(new Set());
-  const [personalFitFilters, setPersonalFitFilters] = useState<Set<string>>(new Set());
-
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<any>(null);
   const zoomTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const zoomAdjustTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isZoomingRef = useRef(false);
+  const latestQueryRef = useRef(""); // Track latest query to handle race conditions
   const backgroundCanvasRef = useRef<HTMLCanvasElement>(null);
   const [graphTransform, setGraphTransform] = useState({ zoom: 1, x: 0, y: 0 });
+  const notificationDismissTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const notificationCleanupTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Cleanup function to cancel any pending zoom operations
   const cancelPendingZooms = useCallback(() => {
@@ -130,6 +135,62 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
     isZoomingRef.current = false;
   }, []);
 
+  const clearNotificationTimers = useCallback(() => {
+    if (notificationDismissTimeoutRef.current) {
+      clearTimeout(notificationDismissTimeoutRef.current);
+      notificationDismissTimeoutRef.current = null;
+    }
+    if (notificationCleanupTimeoutRef.current) {
+      clearTimeout(notificationCleanupTimeoutRef.current);
+      notificationCleanupTimeoutRef.current = null;
+    }
+  }, []);
+
+  const scheduleNotificationDismissal = useCallback(() => {
+    clearNotificationTimers();
+    notificationDismissTimeoutRef.current = setTimeout(() => {
+      setIsFadingOut(true);
+      notificationCleanupTimeoutRef.current = setTimeout(() => {
+        setShowNotification(false);
+        setNotificationMessage("");
+        setIsFadingOut(false);
+        setShouldPersistNotification(false);
+      }, 500);
+    }, 8000);
+  }, [clearNotificationTimers]);
+
+  useEffect(() => {
+    return () => {
+      clearNotificationTimers();
+    };
+  }, [clearNotificationTimers]);
+
+  useEffect(() => {
+    if (!notificationMessage || !showNotification) {
+      clearNotificationTimers();
+      return;
+    }
+
+    if (shouldPersistNotification) {
+      if (isQueryFocused) {
+        clearNotificationTimers();
+        setIsFadingOut(false);
+        return;
+      }
+      scheduleNotificationDismissal();
+      return;
+    }
+
+    scheduleNotificationDismissal();
+  }, [
+    notificationMessage,
+    showNotification,
+    isQueryFocused,
+    shouldPersistNotification,
+    scheduleNotificationDismissal,
+    clearNotificationTimers,
+  ]);
+
   const handleZoomIn = () => {
     if (graphRef.current) {
       graphRef.current.zoom(graphRef.current.zoom() * 1.2, 400);
@@ -142,7 +203,7 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
     }
   };
 
-  const handleReset = () => {
+  const handleReset = useCallback(() => {
     // Cancel any pending zoom operations
     cancelPendingZooms();
     
@@ -160,7 +221,7 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
         }
       }, 400);
     }
-  };
+  }, [cancelPendingZooms]);
 
   useImperativeHandle(ref, () => ({
     zoomIn: handleZoomIn,
@@ -168,35 +229,128 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
     reset: handleReset
   }));
 
-  const handleNodeClick = (node: any) => {
-    // Only handle clicks on articles (Group 2)
+  const buildNodeNeighborhood = useCallback((node: any) => {
+    const nodesSet = new Set<string>();
+    const linksSet = new Set<any>();
+
+    if (!node || !node.id) {
+      return { nodesSet, linksSet };
+    }
+
+    nodesSet.add(node.id);
+
+    (data.links as any[]).forEach(link => {
+      const sourceId = typeof link.source === "object" ? link.source.id : link.source;
+      const targetId = typeof link.target === "object" ? link.target.id : link.target;
+
+      if (sourceId === node.id || targetId === node.id) {
+        linksSet.add(link);
+        if (sourceId) nodesSet.add(sourceId);
+        if (targetId) nodesSet.add(targetId);
+      }
+    });
+
+    return { nodesSet, linksSet };
+  }, [data.links]);
+
+  const clearLockedHighlight = useCallback(() => {
+    if (!lockedNodeId) return;
+    setLockedNodeId(null);
+    if (nodeRelevance.size === 0) {
+      setHighlightNodes(new Set());
+      setHighlightLinks(new Set());
+    }
+    handleReset();
+  }, [handleReset, lockedNodeId, nodeRelevance.size]);
+
+  const zoomToNodeCluster = useCallback((nodeSet: Set<string>) => {
+    if (!graphRef.current || nodeSet.size === 0) return;
+
+    cancelPendingZooms();
+
+    const focusedNodes = (data.nodes as any[]).filter(
+      (graphNode) => graphNode.id && nodeSet.has(graphNode.id) && typeof graphNode.x === "number" && typeof graphNode.y === "number"
+    );
+
+    if (focusedNodes.length === 0) return;
+
+    const minX = Math.min(...focusedNodes.map((n) => n.x as number));
+    const maxX = Math.max(...focusedNodes.map((n) => n.x as number));
+    const minY = Math.min(...focusedNodes.map((n) => n.y as number));
+    const maxY = Math.max(...focusedNodes.map((n) => n.y as number));
+
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+
+    const boundsWidth = Math.max(maxX - minX, 1);
+    const boundsHeight = Math.max(maxY - minY, 1);
+    const padding = Math.max(200, GRAPH_RING_RADII.article * 0.15);
+
+    const zoomX = dimensions.width / (boundsWidth + padding);
+    const zoomY = dimensions.height / (boundsHeight + padding);
+    const targetZoom = Math.min(6, Math.max(1.8, Math.min(zoomX, zoomY)));
+
+    isZoomingRef.current = true;
+    graphRef.current.centerAt(centerX, centerY, 600);
+    graphRef.current.zoom(targetZoom, 600);
+    setTimeout(() => {
+      isZoomingRef.current = false;
+    }, 650);
+  }, [cancelPendingZooms, data.nodes, dimensions.height, dimensions.width]);
+
+  const handleNodeClick = useCallback((node: any) => {
+    if (!node) return;
+
+    // Thematic nodes (Group 1) lock highlights & zoom
+    if (node.group === 1 && nodeRelevance.size === 0) {
+      const { nodesSet, linksSet } = buildNodeNeighborhood(node);
+      setHighlightNodes(nodesSet);
+      setHighlightLinks(linksSet);
+      setLockedNodeId(node.id);
+      zoomToNodeCluster(nodesSet);
+      return;
+    }
+
+    // Any other click clears locked highlight
+    if (lockedNodeId) {
+      clearLockedHighlight();
+    }
+
+    // Article nodes (Group 2) navigate
     if (node.group === 2) {
-      // Navigate to article detail page if articleId is available
       if (node.articleId) {
         window.location.href = `/article/${node.articleId}`;
       } else if (node.id) {
-        // Fallback: try using node.id as articleId
         window.location.href = `/article/${node.id}`;
       }
     }
-  };
+  }, [buildNodeNeighborhood, clearLockedHighlight, lockedNodeId, nodeRelevance.size, zoomToNodeCluster]);
 
   useEffect(() => {
     // Fetch real data when teamId is available
     console.log('KnowledgeGraph: teamId =', teamId, 'session =', session);
+    
+    let isMounted = true;
+
     if (teamId && !showMockData) {
       const accessToken = session?.access_token || null;
       console.log('KnowledgeGraph: Fetching graph data for team:', teamId);
       fetchGraphData(teamId, accessToken).then(data => {
+        if (!isMounted) return;
         console.log('KnowledgeGraph: Received data:', data);
         console.log('KnowledgeGraph: Number of nodes:', data.nodes?.length, 'Number of links:', data.links?.length);
         setFetchedData(data);
       }).catch(error => {
+        if (!isMounted) return;
         console.error('KnowledgeGraph: Error fetching data:', error);
       });
     } else {
       console.warn('KnowledgeGraph: Not fetching - teamId:', teamId, 'showMockData:', showMockData);
     }
+
+    return () => {
+      isMounted = false;
+    };
   }, [teamId, session, showMockData]);
 
   useEffect(() => {
@@ -260,7 +414,7 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
     // Apply layout logic
     // Position Group 0 nodes (base categories) in a fixed circle
     const baseCategories = nodes.filter((n: any) => n.group === 0);
-    const baseCategoryRadius = 150;
+    const baseCategoryRadius = GRAPH_RING_RADII.base;
 
     baseCategories.forEach((node: any, i: number) => {
       const angle = (i / baseCategories.length) * 2 * Math.PI;
@@ -270,26 +424,13 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
 
     // Initialize other nodes near the center to prevent them from starting far away
     nodes.forEach((node: any) => {
-      // Enrich with stable mock properties if missing (for filtering)
-      if (node.group === 2) {
-         if (node.read === undefined) {
-             // Deterministic read status (approx 50% read)
-             node.read = getStableRandom(node.id + "read") > 0.5;
-         }
-         if (!node.fit) {
-             // Deterministic fit
-             const r = getStableRandom(node.id + "fit");
-             node.fit = r > 0.66 ? "high" : (r > 0.33 ? "medium" : "low");
-         }
-      }
-
       if (node.group !== 0) {
         node.fx = undefined;
         node.fy = undefined;
         // Initialize nodes at their target radius to help with grouping
         // This gives the radial force a better starting point
-        // Ensure they start outside the base category ring (150px)
-        const targetRadius = node.group === 1 ? 350 : 550;
+        // Ensure they start outside the base category ring
+        const targetRadius = node.group === 1 ? GRAPH_RING_RADII.subtopic : GRAPH_RING_RADII.article;
         const angle = Math.random() * 2 * Math.PI; // Random angle around circle
         if (!node.x) node.x = centerX + targetRadius * Math.cos(angle);
         if (!node.y) node.y = centerY + targetRadius * Math.sin(angle);
@@ -328,6 +469,63 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
   }, [fetchedData, showMockData]);
 
   useEffect(() => {
+    if (!lockedNodeId || nodeRelevance.size > 0) return;
+
+    const lockedNode = (data.nodes as any[]).find((node) => node.id === lockedNodeId);
+
+    if (!lockedNode) {
+      setLockedNodeId(null);
+      setHighlightNodes(new Set());
+      setHighlightLinks(new Set());
+      return;
+    }
+
+    const { nodesSet, linksSet } = buildNodeNeighborhood(lockedNode);
+    setHighlightNodes(nodesSet);
+    setHighlightLinks(linksSet);
+  }, [buildNodeNeighborhood, data.nodes, lockedNodeId, nodeRelevance.size]);
+
+  const targetAngles = useMemo(() => {
+    if (!data.nodes.length) return new Map<string, number>();
+
+    const angleMap = new Map<string, number>();
+    data.nodes.forEach((node: any) => {
+      if (node.group === 0 && typeof node.fx === "number" && typeof node.fy === "number") {
+        angleMap.set(node.id, Math.atan2(node.fy, node.fx));
+      }
+    });
+
+    if (!angleMap.size) return angleMap;
+
+    const getNodeId = (nodeRef: any) =>
+      typeof nodeRef === "object" && nodeRef !== null ? nodeRef.id : nodeRef;
+
+    let changed = true;
+    let iterations = 0;
+    while (changed && iterations < 5) {
+      changed = false;
+      iterations += 1;
+
+      data.links.forEach((link: any) => {
+        const sourceId = getNodeId(link.source);
+        const targetId = getNodeId(link.target);
+        const sourceAngle = sourceId ? angleMap.get(sourceId) : undefined;
+        const targetAngle = targetId ? angleMap.get(targetId) : undefined;
+
+        if (sourceAngle !== undefined && targetId && targetAngle === undefined) {
+          angleMap.set(targetId, sourceAngle);
+          changed = true;
+        } else if (targetAngle !== undefined && sourceId && sourceAngle === undefined) {
+          angleMap.set(sourceId, targetAngle);
+          changed = true;
+        }
+      });
+    }
+
+    return angleMap;
+  }, [data.links, data.nodes]);
+
+  useEffect(() => {
     if (graphRef.current && data.nodes.length > 0) {
       const fg = graphRef.current;
       
@@ -340,16 +538,29 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
           return -500; // Very strong repulsion near center
         }
         return -300; // Normal repulsion further out
-      }).distanceMax(800);
+      }).distanceMax(GRAPH_RING_RADII.article + 300);
 
       // 2. Link Force - keeps connected nodes at appropriate distances
       fg.d3Force('link')?.distance((link: any) => {
-         const target = typeof link.target === 'object' ? link.target : data.nodes.find((n: any) => n.id === link.target);
-         const group = target?.group;
-         
-         if (group === 2) return 80;   // Articles: connection to subtopic
-         if (group === 1) return 120;  // Subtopics: connection to main topic
-         return 200; // Base categories
+         const resolveGroup = (nodeRef: any) => {
+           if (typeof nodeRef === 'object' && nodeRef !== null && typeof nodeRef.group === 'number') {
+             return nodeRef.group;
+           }
+           const nodeId = typeof nodeRef === 'object' && nodeRef !== null ? nodeRef.id : nodeRef;
+           return data.nodes.find((n: any) => n.id === nodeId)?.group;
+         };
+
+         const sourceGroup = resolveGroup(link.source);
+         const targetGroup = resolveGroup(link.target);
+         const groups = [sourceGroup, targetGroup];
+
+         if (groups.includes(2)) {
+           return LINK_DISTANCES.subtopicToArticle;
+         }
+         if (groups.includes(1) && groups.includes(0)) {
+           return LINK_DISTANCES.baseToSubtopic;
+         }
+         return LINK_DISTANCES.fallback;
       });
       
       // 3. Custom Radial Force - strong to maintain ring structure and prevent inward collapse
@@ -367,8 +578,8 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
           const r = Math.sqrt(dx * dx + dy * dy);
           
           // Target radii for each group - ensure they're outside the base category ring (150px)
-          const minRadius = 200; // Minimum radius to stay outside base categories
-          const targetRadius = node.group === 1 ? 350 : 550; // Subcategories at 350, Articles at 550
+          const minRadius = GRAPH_RING_RADII.base + GRAPH_RING_PADDING; // Minimum radius to stay outside base categories
+          const targetRadius = node.group === 1 ? GRAPH_RING_RADII.subtopic : GRAPH_RING_RADII.article; // Subcategories at 350, Articles at 900
           
           // If node is too close to center, push it outward strongly
           if (r < minRadius) {
@@ -383,6 +594,18 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
           
           node.vx = (node.vx || 0) + (dx / r) * k;
           node.vy = (node.vy || 0) + (dy / r) * k;
+
+          const targetAngle = targetAngles.get(node.id);
+          if (targetAngle !== undefined && r > 0) {
+            const angle = Math.atan2(dy, dx);
+            let angleDelta = targetAngle - angle;
+            angleDelta = Math.atan2(Math.sin(angleDelta), Math.cos(angleDelta));
+            const angularStrength = 0.05;
+            const tangentialX = (-dy / r) * angleDelta * angularStrength;
+            const tangentialY = (dx / r) * angleDelta * angularStrength;
+            node.vx = (node.vx || 0) + tangentialX;
+            node.vy = (node.vy || 0) + tangentialY;
+          }
         });
       };
       
@@ -391,144 +614,30 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
       // Re-heat simulation to apply forces (only when data changes, not on hover)
       fg.d3ReheatSimulation();
     }
-  }, [data.nodes.length, dimensions]); // Only depend on node count, not full data object
-
-  useEffect(() => {
-    // Don't interfere with search results - if we have search results, don't apply filter-based relevance
-    if (highlightNodes.size > 0 && nodeRelevance.size > 0) {
-      return; // Keep search-based relevance
-    }
-    
-    const hasStatus = statusFilters.size > 0;
-    const hasFit = personalFitFilters.size > 0;
-    
-    // If no filters active, clear relevance scores (return to default visualization)
-    if (!hasStatus && !hasFit) {
-      setNodeRelevance(new Map());
-      return;
-    }
-
-    const newRelevance = new Map<string, number>();
-
-    // Build Adjacency Map for propagation
-    const adj = new Map<string, Set<string>>();
-    data.links.forEach((link: any) => {
-       const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
-       const targetId = typeof link.target === 'object' ? link.target.id : link.target;
-       
-       if (!adj.has(sourceId)) adj.set(sourceId, new Set());
-       if (!adj.has(targetId)) adj.set(targetId, new Set());
-       
-       adj.get(sourceId)!.add(targetId);
-       adj.get(targetId)!.add(sourceId);
-    });
-
-    // Helper to find node by ID
-    const nodeMap = new Map(data.nodes.map((n: any) => [n.id, n]));
-
-    // 1. Score Group 2 (Articles) - The Leaves
-    // Calculate match based on filters
-    data.nodes.forEach((node: any) => {
-      if (node.group !== 2) return;
-
-      let matchesStatus = true;
-      if (hasStatus) {
-        const status = node.read ? "read" : "unread";
-        matchesStatus = statusFilters.has(status);
-      }
-
-      let matchesFit = true;
-      if (hasFit) {
-        matchesFit = personalFitFilters.has(node.fit);
-      }
-
-      // Binary score for leaves: 1 if matches all active filters, 0 otherwise
-      const score = (matchesStatus && matchesFit) ? 1 : 0;
-      newRelevance.set(node.id, score);
-    });
-
-    // 2. Score Group 1 (Subtopics) - Aggregate of connected Articles
-    data.nodes.forEach((node: any) => {
-      if (node.group !== 1) return;
-      
-      const neighbors = Array.from(adj.get(node.id) || []);
-      // Consider only connected Group 2 nodes (children)
-      const children = neighbors.filter(nid => {
-         const n = nodeMap.get(nid);
-         return n && n.group === 2;
-      });
-
-      if (children.length > 0) {
-        const sum = children.reduce((acc, nid) => acc + (newRelevance.get(nid) || 0), 0);
-        newRelevance.set(node.id, sum / children.length);
-      } else {
-        newRelevance.set(node.id, 0);
-      }
-    });
-
-    // 3. Score Group 0 (Departments) - Aggregate of connected Subtopics
-    data.nodes.forEach((node: any) => {
-      if (node.group !== 0) return;
-
-      const neighbors = Array.from(adj.get(node.id) || []);
-      // Consider only connected Group 1 nodes (children)
-      const children = neighbors.filter(nid => {
-         const n = nodeMap.get(nid);
-         return n && n.group === 1;
-      });
-
-      if (children.length > 0) {
-        const sum = children.reduce((acc, nid) => acc + (newRelevance.get(nid) || 0), 0);
-        newRelevance.set(node.id, sum / children.length);
-      } else {
-        newRelevance.set(node.id, 0);
-      }
-    });
-
-    setNodeRelevance(newRelevance);
-    setHighlightNodes(new Set()); // Clear binary highlights if any
-    
-  }, [statusFilters, personalFitFilters, data]);
+  }, [data, dimensions, targetAngles]); // Re-run when data changes to update closures
 
   // Use useCallback to prevent excessive re-renders and memoize the handler
   const handleNodeHover = useCallback((node: any) => {
-    // Only update hover state - this is lightweight and doesn't trigger physics
     setHoverNode(node || null);
-
-    // Only update highlight nodes/links if we're not in search mode
-    // In search mode, keep the search highlights and don't override them
-    if (node && highlightNodes.size === 0) {
-      // Only do expensive link iteration if not in search mode
-      const newHighlightNodes = new Set<string>();
-      const newHighlightLinks = new Set();
-
-      newHighlightNodes.add(node.id);
-      // Use a more efficient approach - cache link source/target IDs
-      (data.links as any[]).forEach(link => {
-        const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
-        const targetId = typeof link.target === 'object' ? link.target.id : link.target;
-        
-        if (sourceId === node.id || targetId === node.id) {
-          newHighlightLinks.add(link);
-          newHighlightNodes.add(sourceId);
-          newHighlightNodes.add(targetId);
-        }
-      });
-
-      setHighlightNodes(newHighlightNodes);
-      setHighlightLinks(newHighlightLinks);
-    } else if (!node) {
-      // Clear highlights when not hovering (only if not in search mode)
-      if (highlightNodes.size > 0 && nodeRelevance.size === 0) {
-        setHighlightNodes(new Set());
-        setHighlightLinks(new Set());
-      }
-    }
 
     if (containerRef.current) {
       containerRef.current.style.cursor = node ? "pointer" : "default";
     }
-  }, [data.links, highlightNodes.size, nodeRelevance.size]);
+
+    // Don't override search or locked highlights
+    if (nodeRelevance.size > 0 || lockedNodeId) {
+      return;
+    }
+
+    if (node) {
+      const { nodesSet, linksSet } = buildNodeNeighborhood(node);
+      setHighlightNodes(nodesSet);
+      setHighlightLinks(linksSet);
+    } else if (highlightNodes.size > 0) {
+      setHighlightNodes(new Set());
+      setHighlightLinks(new Set());
+    }
+  }, [buildNodeNeighborhood, highlightNodes.size, lockedNodeId, nodeRelevance.size]);
 
   const handleSearch = async (query: string) => {
     const trimmedQuery = query.trim();
@@ -549,13 +658,20 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
     
     // Update current query immediately
     setCurrentQuery(trimmedQuery);
+    latestQueryRef.current = trimmedQuery;
     
     // Clear ALL previous search state immediately (use functional updates to ensure they happen)
     setSearchLoading(true);
     setSearchError(null);
     setSearchResults([]);
+    setActiveResultIndex(null);
     setCategoryResults([]);
-    setSearchSummary("");
+    clearNotificationTimers();
+    setShowNotification(false);
+    setNotificationMessage("");
+    setIsFadingOut(false);
+    setShouldPersistNotification(false);
+    setLockedNodeId(null);
     setHighlightNodes(new Set());
     setHighlightLinks(new Set());
     setNodeRelevance(new Map());
@@ -627,7 +743,12 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
         responseData = await response.json();
       }
 
-      console.log('Search response data:', responseData);
+      if (latestQueryRef.current !== trimmedQuery) {
+        console.log('Search result ignored: query changed or cleared');
+        setSearchLoading(false);
+        return;
+      }
+
       console.log('Search response data:', responseData);
       
       // Handle both articles and categories
@@ -640,20 +761,10 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
       
       // Set the AI-generated summary (only if LLM generated one)
       if (summary) {
-        setSearchSummary(summary);
+        setNotificationMessage(summary);
         setIsFadingOut(false);
+        setShouldPersistNotification(true);
         setShowNotification(true);
-        
-        // Auto-dismiss after 8 seconds
-        setTimeout(() => {
-          setIsFadingOut(true);
-          // Clear summary after fade out animation completes
-          setTimeout(() => {
-            setShowNotification(false);
-            setSearchSummary("");
-            setIsFadingOut(false);
-          }, 500);
-        }, 8000);
       }
       
       // Use original fetched data for searching, not filtered data
@@ -704,15 +815,21 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
       // Handle article search results
       if (!articles || articles.length === 0) {
         console.log('No articles or categories found for query:', trimmedQuery);
+        
+        const noResultsMessage = `No matching articles were found for "${trimmedQuery}". Try another query.`;
+        setNotificationMessage(noResultsMessage);
+        setIsFadingOut(false);
+        setShouldPersistNotification(false);
+        setShowNotification(true);
+
         // Clear all state when no results
         setSearchResults([]);
+        setActiveResultIndex(null);
         setCategoryResults([]);
-        setSearchSummary("");
-        setShowNotification(false);
-        setIsFadingOut(false);
         setHighlightNodes(new Set());
         setHighlightLinks(new Set());
         setNodeRelevance(new Map());
+        setLockedNodeId(null);
         setSearchError(null);
         setSearchLoading(false);
         return;
@@ -747,6 +864,7 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
       // Sort by similarity (highest first)
       results.sort((a, b) => b.similarity - a.similarity);
       setSearchResults(results);
+      setActiveResultIndex(results.length > 0 ? 0 : null);
 
       // Find matching article nodes in the graph
       originalNodes.forEach((node: any) => {
@@ -822,35 +940,87 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
       setSearchError(error instanceof Error ? error.message : 'Search failed');
       // Clear all results on error
       setSearchResults([]);
+      setActiveResultIndex(null);
       setCategoryResults([]);
-      setSearchSummary("");
+      clearNotificationTimers();
+      setNotificationMessage("");
       setShowNotification(false);
       setIsFadingOut(false);
+      setShouldPersistNotification(false);
       setHighlightNodes(new Set());
       setHighlightLinks(new Set());
       setNodeRelevance(new Map());
+      setLockedNodeId(null);
     } finally {
       setSearchLoading(false);
     }
   };
 
   const handleClearSearch = () => {
+    latestQueryRef.current = "";
     setHighlightNodes(new Set());
     setHighlightLinks(new Set());
     setHoverNode(null);
+    setLockedNodeId(null);
     setNodeRelevance(new Map());
     setSearchError(null);
     setSearchLoading(false);
     setSearchResults([]);
+    setActiveResultIndex(null);
     setCategoryResults([]);
-    setIsFadingOut(true);
-    setTimeout(() => {
-      setShowNotification(false);
-      setSearchSummary("");
-      setIsFadingOut(false);
-    }, 500);
+    clearNotificationTimers();
+    setShowNotification(false);
+    setNotificationMessage("");
+    setIsFadingOut(false);
+    setShouldPersistNotification(false);
     setCurrentQuery(""); // Clear current query tracking
+    handleReset();
   };
+
+  const findNodeForResult = useCallback((resultId: string) => {
+    if (!resultId) return null;
+    return (data.nodes as any[]).find(
+      (node) =>
+        node.id === resultId ||
+        node.articleId === resultId
+    ) || null;
+  }, [data.nodes]);
+
+  useEffect(() => {
+    if (activeResultIndex === null || searchResults.length === 0) return;
+    const targetResult = searchResults[activeResultIndex];
+    if (!targetResult) return;
+
+    const targetNode = findNodeForResult(targetResult.id);
+    if (!targetNode || typeof targetNode.x !== "number" || typeof targetNode.y !== "number") {
+      console.warn('Step navigation: no node found for result', targetResult.id);
+      return;
+    }
+
+    cancelPendingZooms();
+    if (graphRef.current) {
+      isZoomingRef.current = true;
+      const duration = 600;
+      graphRef.current.centerAt(targetNode.x, targetNode.y, duration);
+      const currentZoom = typeof graphRef.current.zoom === "function" ? graphRef.current.zoom() : 1;
+      const targetZoom = Math.max(2.2, Math.min(4, currentZoom < 2 ? 2.4 : currentZoom));
+      graphRef.current.zoom(targetZoom, duration);
+      setTimeout(() => {
+        isZoomingRef.current = false;
+      }, duration + 50);
+    }
+  }, [activeResultIndex, searchResults, findNodeForResult, cancelPendingZooms]);
+
+  const handleResultStepper = useCallback((direction: "prev" | "next") => {
+    if (searchResults.length === 0) return;
+    setActiveResultIndex((prev) => {
+      const total = searchResults.length;
+      if (total === 0) return null;
+      const delta = direction === "next" ? 1 : -1;
+      const baseIndex = typeof prev === "number" ? prev : direction === "next" ? -1 : 0;
+      return (baseIndex + delta + total) % total;
+    });
+  }, [searchResults.length]);
 
   // Helper: Interpolate between two colors
   const interpolateColor = (score: number, start: number[], end: number[]) => {
@@ -865,10 +1035,10 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
     // Normalize similarity to 0-1 range (assuming similarity is already 0-1)
     const normalized = Math.max(0, Math.min(1, similarity));
     
-    // Green (high similarity): rgb(34, 197, 94) = #22c55e
-    // Yellow (low similarity): rgb(234, 179, 8) = #eab308
-    const green = [34, 197, 94];
-    const yellow = [234, 179, 8];
+    // Vibrant green (high similarity): rgb(52, 211, 153) = #34d399
+    // Vibrant yellow (low similarity): rgb(252, 211, 77) = #fcd34d
+    const green = [52, 211, 153];
+    const yellow = [252, 211, 77];
     
     // Invert so higher similarity = more green
     // Lower similarity = more yellow
@@ -1024,27 +1194,6 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
         style={{ zIndex: 0 }}
       />
       <div className="absolute top-6 left-6 flex flex-wrap gap-2 z-10">
-        <GraphFilter
-          title="Status"
-          options={[
-            { label: "Read", value: "read", icon: Eye },
-            { label: "Unread", value: "unread", icon: EyeOff },
-          ]}
-          selectedValues={statusFilters}
-          onSelect={setStatusFilters}
-          enableSearch={false}
-        />
-        <GraphFilter
-          title="Personal Fit"
-          options={[
-            { label: "High Fit", value: "high" },
-            { label: "Medium Fit", value: "medium" },
-            { label: "Low Fit", value: "low" },
-          ]}
-          selectedValues={personalFitFilters}
-          onSelect={setPersonalFitFilters}
-          enableSearch={false}
-        />
         {/* 
         <GraphFilter
           title="Category"
@@ -1111,6 +1260,11 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
           const color = getNodeColor(node);
           const isHighlighted = highlightNodes.has(node.id);
           const isHovered = hoverNode && (node.id === hoverNode.id || isHighlighted);
+          const isHoverMode = Boolean(hoverNode && !lockedNodeId && nodeRelevance.size === 0);
+          const isThematicHover = isHoverMode && hoverNode?.group === 1;
+          const isDepartmentHover = isHoverMode && hoverNode?.group === 0;
+          const isHoverHighlight =
+            (isThematicHover || isDepartmentHover) && (node.id === hoverNode?.id || isHighlighted);
           const isDimmed = color === "#f4f4f5";
           
           // Draw Node Circle
@@ -1164,7 +1318,17 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
             const textB = isDimmed ? 231 : 27;
 
             ctx.fillStyle = `rgba(${textR}, ${textG}, ${textB}, ${opacity})`;
-            ctx.font = `${isHovered || node.group === 0 ? '600' : '400'} ${fontSize}px Sans-Serif`;
+            
+            let fontWeight = '400';
+            if (node.group === 0) {
+              fontWeight = '600';
+            } else if (isHoverHighlight) {
+              fontWeight = node.group === 1 ? '600' : '500';
+            } else if (isHovered) {
+              fontWeight = '600';
+            }
+
+            ctx.font = `${fontWeight} ${fontSize}px Sans-Serif`;
             
             // Draw text below the node
             ctx.fillText(label, node.x, node.y + r + fontSize);
@@ -1194,6 +1358,7 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
         warmupTicks={0} // No warmup
         onNodeHover={handleNodeHover}
         onNodeClick={handleNodeClick}
+        onBackgroundClick={clearLockedHighlight}
       />
       </div>
 
@@ -1202,10 +1367,15 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
         onClear={handleClearSearch}
         loading={searchLoading}
         error={searchError}
+        onQueryFocusChange={setIsQueryFocused}
+        resultCount={searchResults.length}
+        activeResultIndex={activeResultIndex}
+        activeResultTitle={typeof activeResultIndex === "number" ? searchResults[activeResultIndex]?.title : undefined}
+        onStepResult={handleResultStepper}
       />
 
       {/* AI Summary Notification - ChatGPT style */}
-      {searchSummary && showNotification && (
+      {notificationMessage && showNotification && (
         <div 
           className={`absolute top-6 left-1/2 -translate-x-1/2 max-w-2xl w-[90%] z-50 transition-all duration-500 ease-in-out ${
             isFadingOut 
@@ -1213,10 +1383,10 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
               : 'opacity-100 translate-y-0 pointer-events-auto'
           }`}
         >
-          <div className="bg-white/80 backdrop-blur-xl border border-white/20 rounded-2xl shadow-2xl overflow-hidden">
+          <div className="bg-white/80 backdrop-blur-xl border border-white/20 rounded-2xl shadow-md overflow-hidden">
             <div className="p-4 flex items-start gap-3">
               {/* Orion Logo/Avatar - using favicon */}
-              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-white/90 flex items-center justify-center shadow-lg overflow-hidden p-1">
+              <div className="shrink-0 w-8 h-8 rounded-full bg-white/90 flex items-center justify-center shadow-lg overflow-hidden p-1">
                 <Image 
                   src="/favicon.ico" 
                   alt="Orion" 
@@ -1230,7 +1400,7 @@ export const KnowledgeGraph = forwardRef<KnowledgeGraphRef, { showMockData?: boo
               {/* Message Content */}
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-gray-800 leading-relaxed">
-                  {searchSummary}
+                  {notificationMessage}
                 </p>
               </div>
             </div>
