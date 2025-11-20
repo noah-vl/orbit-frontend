@@ -2,7 +2,7 @@
 
 <div style="display: flex; gap: 20px; align-items: center;">
   <img src="public/splash.png" alt="Splash" style="max-width: 50%; height: auto;" />
-  <img src="public/graph.png" alt="Graph" style="max-width: 50%; height: auto;" />
+  <iframe width="560" height="315" src="https://www.youtube.com/embed/u8nmoltapN8" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen style="max-width: 50%; height: auto; aspect-ratio: 16/9;"></iframe>
 </div>
 
 **A collaborative "knowledge brain" for external information**
