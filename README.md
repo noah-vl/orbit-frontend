@@ -2,7 +2,7 @@
 
 <div style="display: flex; gap: 20px; align-items: center;">
   <img src="public/splash.png" alt="Splash" style="max-width: 50%; height: auto;" />
-  <iframe width="560" height="315" src="https://www.youtube.com/embed/u8nmoltapN8" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen style="max-width: 50%; height: auto; aspect-ratio: 16/9;"></iframe>
+  <img src="public/graph.png" alt="Graph" style="max-width: 50%; height: auto;" />
 </div>
 
 **A collaborative "knowledge brain" for external information**
@@ -10,6 +10,8 @@
 Teams constantly find valuable articles, posts, and resources—but they disappear into Slack, email, and DMs. At the same time, a single article *should* mean something different to an engineer, a marketer, or a founder.
 
 Orbit is a collaborative knowledge management platform that captures everything your organization encounters and automatically rewrites each piece into versions tailored to every teammate's role, expertise, and preferences.
+
+See a demo of Orbit [here](https://youtu.be/u8nmoltapN8).
 
 ## 🎯 What Problem Does It Solve?
 
