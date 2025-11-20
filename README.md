@@ -1,5 +1,7 @@
 # Orbit
 
+![Splash](public/splash.png)
+
 **A collaborative "knowledge brain" for external information**
 
 Teams constantly find valuable articles, posts, and resources—but they disappear into Slack, email, and DMs. At the same time, a single article *should* mean something different to an engineer, a marketer, or a founder.
@@ -25,9 +27,8 @@ Orbit solves this by:
 
 Orbit leverages AI and graph technologies to deliver personalized knowledge at scale:
 
-- **Google Gemini 3 Pro Preview**: Powers role-specific content personalization and insight generation, rewriting articles for different audiences (engineering, product, marketing, leadership)
-- **Google Gemini 2.5 Flash**: Fast query enhancement and semantic understanding for natural language search
-- **Gemini text-embedding-004**: State-of-the-art vector embeddings for semantic search and content similarity
+- **Google Gemini 3 Pro/2.5 Flash**: Powers role-specific content personalization and insight generation, rewriting articles for different audiences (engineering, product, marketing, leadership). Also used for fast query enhancement and semantic understanding for natural language search.
+- **Gemini text-embedding-004**: SOTA vector embeddings for semantic search and content similarity
 - **Vector Similarity Search**: PostgreSQL-based vector search with cosine similarity for finding related content
 - **Knowledge Graph Construction**: Automatic graph building from content relationships, tags, and semantic connections
 - **Real-time Collaborative Editing**: Tiptap with Y.js for live collaborative document editing
